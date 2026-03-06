@@ -33,6 +33,7 @@ export interface ProxyServer {
 export function createServer(deps: ProxyServerDeps): ProxyServer {
   let relays = [...deps.initialRelays];
   const selector = createRelaySelector(relays, defaultSelectionConfig);
+  const relayListCache = new Map<string, RelayRecord[]>();
 
   const runtime: ProxyRuntime = {
     pickRelay: () => selector.next(),
@@ -40,14 +41,34 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
   };
 
   const routeDeps: RouteDeps = {
-    listRelays: (filters) => createRelaySelector(relays, filters).list(),
+    listRelays: (filters) => {
+      const cacheKey = relayFilterCacheKey(filters);
+      const cached = relayListCache.get(cacheKey);
+      if (cached) {
+        return [...cached];
+      }
+
+      const next = createRelaySelector(relays, filters).list();
+      relayListCache.set(cacheKey, next);
+
+      if (relayListCache.size > 64) {
+        const oldestKey = relayListCache.keys().next().value;
+        if (oldestKey !== undefined) {
+          relayListCache.delete(oldestKey);
+        }
+      }
+
+      return [...next];
+    },
     updateConfig: (nextConfig) => {
       selector.update(relays, nextConfig);
+      relayListCache.clear();
       return selector.getConfig();
     },
     refresh: async () => {
       relays = await deps.refreshRelays();
       selector.update(relays);
+      relayListCache.clear();
       return relays;
     },
   };
@@ -194,4 +215,16 @@ function sendJson(
     "content-length": Buffer.byteLength(body),
   });
   res.end(body);
+}
+
+function relayFilterCacheKey(filters: RelaySelectionConfig): string {
+  return JSON.stringify({
+    country: filters.country ?? "",
+    city: filters.city ?? "",
+    hostname: filters.hostname ?? "",
+    provider: filters.provider ?? "",
+    ownership: filters.ownership ?? "",
+    sort: filters.sort ?? "",
+    unhealthyBackoffMs: filters.unhealthyBackoffMs ?? "",
+  });
 }

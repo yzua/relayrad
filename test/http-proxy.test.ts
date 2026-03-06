@@ -26,6 +26,19 @@ async function startHttpTargetServer() {
   return server;
 }
 
+async function startMalformedHttpTargetServer() {
+  const server = createTcpServer((socket) => {
+    socket.write("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n");
+    socket.end();
+  });
+
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", () => resolve()),
+  );
+
+  return server;
+}
+
 async function startSocks5Server() {
   let hitCount = 0;
   const server = createTcpServer((clientSocket) => {
@@ -251,6 +264,44 @@ describe("proxy routing", () => {
     });
 
     expect(body).toBe("target:GET:/retry");
+  });
+
+  test("returns 502 when upstream closes before full headers", async () => {
+    const malformedTarget = await startMalformedHttpTargetServer();
+    const malformedPort = (malformedTarget.address() as AddressInfo).port;
+
+    const response = await new Promise<{ statusCode: number; body: string }>(
+      (resolve, reject) => {
+        const req = httpRequest(
+          {
+            host: "127.0.0.1",
+            port: proxyPort,
+            method: "GET",
+            path: `http://127.0.0.1:${malformedPort}/broken`,
+          },
+          (res) => {
+            let body = "";
+            res.setEncoding("utf8");
+            res.on("data", (chunk) => {
+              body += chunk;
+            });
+            res.on("end", () => {
+              resolve({ statusCode: res.statusCode ?? 0, body });
+            });
+          },
+        );
+
+        req.on("error", reject);
+        req.end();
+      },
+    );
+
+    await new Promise<void>((resolve, reject) =>
+      malformedTarget.close((error) => (error ? reject(error) : resolve())),
+    );
+
+    expect(response.statusCode).toBe(502);
+    expect(response.body).toContain("Upstream closed before headers completed");
   });
 });
 

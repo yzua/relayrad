@@ -3,6 +3,9 @@ import type { Socket } from "node:net";
 import type { RelayRecord } from "../relay/relay-types";
 import { connectViaSocks5 } from "./socks5";
 
+const MAX_UPSTREAM_HEADER_BYTES = 64 * 1024;
+const UPSTREAM_HEADER_READ_TIMEOUT_MS = 10_000;
+
 export interface ProxyRuntime {
   pickRelay: () => RelayRecord | undefined;
   markRelayUnhealthy: (hostname: string) => void;
@@ -79,7 +82,9 @@ async function forwardRequestBody(
   }
 
   for await (const chunk of clientRequest) {
-    upstreamSocket.write(chunk);
+    if (!upstreamSocket.write(chunk)) {
+      await waitForSocketDrain(upstreamSocket);
+    }
   }
 }
 
@@ -163,10 +168,43 @@ function readUntilHeaderEnd(socket: Socket): Promise<Buffer> {
     let totalLength = 0;
     let trailingBytes = Buffer.alloc(0);
     const headerEndMarker = Buffer.from("\r\n\r\n");
+    let settled = false;
+
+    const timeout = setTimeout(() => {
+      settleWithError(new Error("Timed out waiting for upstream headers"));
+    }, UPSTREAM_HEADER_READ_TIMEOUT_MS);
+
+    const settleWithError = (error: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
+    const settleWithBuffer = (buffer: Buffer) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      socket.pause();
+      resolve(buffer);
+    };
 
     const onData = (chunk: Buffer) => {
       chunks.push(chunk);
       totalLength += chunk.length;
+
+      if (totalLength > MAX_UPSTREAM_HEADER_BYTES) {
+        settleWithError(
+          new Error(
+            `Upstream headers exceeded ${MAX_UPSTREAM_HEADER_BYTES} bytes`,
+          ),
+        );
+        return;
+      }
 
       const window =
         trailingBytes.length > 0
@@ -174,9 +212,7 @@ function readUntilHeaderEnd(socket: Socket): Promise<Buffer> {
           : chunk;
 
       if (window.includes(headerEndMarker)) {
-        cleanup();
-        socket.pause();
-        resolve(Buffer.concat(chunks, totalLength));
+        settleWithBuffer(Buffer.concat(chunks, totalLength));
         return;
       }
 
@@ -187,17 +223,54 @@ function readUntilHeaderEnd(socket: Socket): Promise<Buffer> {
     };
 
     const onError = (error: Error) => {
-      cleanup();
-      reject(error);
+      settleWithError(error);
+    };
+
+    const onCloseOrEnd = () => {
+      settleWithError(new Error("Upstream closed before headers completed"));
     };
 
     const cleanup = () => {
+      clearTimeout(timeout);
       socket.off("data", onData);
       socket.off("error", onError);
+      socket.off("close", onCloseOrEnd);
+      socket.off("end", onCloseOrEnd);
     };
 
     socket.on("data", onData);
     socket.on("error", onError);
+    socket.on("close", onCloseOrEnd);
+    socket.on("end", onCloseOrEnd);
+  });
+}
+
+function waitForSocketDrain(socket: Socket): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    const onClose = () => {
+      cleanup();
+      reject(new Error("Upstream socket closed before drain"));
+    };
+
+    const cleanup = () => {
+      socket.off("drain", onDrain);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+    };
+
+    socket.once("drain", onDrain);
+    socket.once("error", onError);
+    socket.once("close", onClose);
   });
 }
 

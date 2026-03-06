@@ -1,4 +1,4 @@
-import type { RelaySelectionConfig } from "./relay-types";
+import type { RelaySelectionConfig } from "../relay/relay-types";
 
 export const defaultSelectionConfig: RelaySelectionConfig = {
   sort: "hostname",

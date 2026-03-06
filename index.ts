@@ -1,8 +1,8 @@
-import { loadRelaysFromMullvadCli } from "./src/mullvad-cli";
-import { parseRelayList } from "./src/relay-parser";
-import { parseRuntimeOptions } from "./src/runtime-options";
-import { createServer } from "./src/server";
-import type { RelayRecord } from "./src/relay-types";
+import { loadRelaysFromMullvadCli } from "./src/relay/mullvad-cli";
+import { parseRelayList } from "./src/relay/relay-parser";
+import type { RelayRecord } from "./src/relay/relay-types";
+import { parseRuntimeOptions } from "./src/runtime/runtime-options";
+import { createServer } from "./src/server/server";
 
 const { host, port } = parseRuntimeOptions({
   argv: process.argv,

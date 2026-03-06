@@ -4,14 +4,19 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
-import { defaultSelectionConfig } from "./config";
 import {
   handleConnectTunnel,
   handleHttpProxyRequest,
   type ProxyRuntime,
-} from "./http-proxy";
-import { createRelaySelector } from "./relay-selector";
-import type { RelayRecord, RelaySelectionConfig } from "./relay-types";
+} from "../proxy/http-proxy";
+import { createRelaySelector } from "../relay/relay-selector";
+import type { RelayRecord, RelaySelectionConfig } from "../relay/relay-types";
+import { defaultSelectionConfig } from "./config";
+import {
+  readJsonBody,
+  sanitizeSelectionConfig,
+  selectionConfigFromUrl,
+} from "./selection-config";
 
 export interface ProxyServerDeps {
   initialRelays: RelayRecord[];
@@ -155,70 +160,6 @@ async function routeRequest(
 
 function isProxyRequest(url: string): boolean {
   return /^http:\/\//i.test(url);
-}
-
-function selectionConfigFromUrl(url: URL): RelaySelectionConfig {
-  return sanitizeSelectionConfig(
-    Object.fromEntries(url.searchParams.entries()),
-  );
-}
-
-function sanitizeSelectionConfig(input: unknown): RelaySelectionConfig {
-  const value = isRecord(input) ? input : {};
-  return {
-    country: stringField(value.country),
-    city: stringField(value.city),
-    hostname: stringField(value.hostname),
-    provider: stringField(value.provider),
-    ownership: ownershipField(value.ownership),
-    sort: sortField(value.sort),
-    unhealthyBackoffMs: numberField(value.unhealthyBackoffMs),
-  };
-}
-
-function stringField(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function numberField(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  }
-  return undefined;
-}
-
-function ownershipField(value: unknown): RelaySelectionConfig["ownership"] {
-  return value === "owned" || value === "rented" ? value : undefined;
-}
-
-function sortField(value: unknown): RelaySelectionConfig["sort"] {
-  return value === "country" ||
-    value === "city" ||
-    value === "hostname" ||
-    value === "random"
-    ? value
-    : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
-  const chunks: Uint8Array[] = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-  }
-
-  if (chunks.length === 0) {
-    return {};
-  }
-
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
 function sendJson(

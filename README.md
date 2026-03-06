@@ -2,43 +2,39 @@
 
 Local rotating HTTP proxy for Mullvad relays.
 
-`relayrad` reads relays from the local `mullvad relay list` CLI output and exposes one stable local proxy endpoint that rotates the upstream Mullvad relay on each request.
+`relayrad` reads relay inventory from `mullvad relay list` (or a fixture file) and exposes one stable local proxy endpoint. Each proxied request is sent through a selected relay based on your active rotation config.
 
-## Requirements
+## Quick Start
+
+### Requirements
 
 - Bun
 - Mullvad CLI installed
-- The host machine connected to Mullvad
+- Host is connected to Mullvad
 
-## Install
+### Install
 
 ```bash
 bun install
 ```
 
-## Run
-
-Start the server:
+### Start
 
 ```bash
 bun run start
 ```
 
-Set a custom port:
+Default endpoint: `http://127.0.0.1:4123`
+
+Custom port:
 
 ```bash
 bun run start -- --port 4123
 ```
 
-Default address:
+## Basic Usage
 
-```text
-http://127.0.0.1:4123
-```
-
-## Examples
-
-Rotate through relays with `curl`:
+Use `relayrad` as your HTTP proxy:
 
 ```bash
 curl -x http://127.0.0.1:4123 http://httpbin.org/ip
@@ -46,21 +42,21 @@ curl -x http://127.0.0.1:4123 http://httpbin.org/ip
 curl -x http://127.0.0.1:4123 http://httpbin.org/ip
 ```
 
-List available relays:
+List currently available relays:
 
 ```bash
-curl 'http://127.0.0.1:4123/relays?country=usa&sort=hostname'
+curl 'http://127.0.0.1:4123/relays?country=usa&sort=random'
 ```
 
-Restrict rotation to a country:
+Update active rotation config:
 
 ```bash
 curl -X POST http://127.0.0.1:4123/rotate \
   -H 'content-type: application/json' \
-  -d '{"country":"usa","sort":"hostname"}'
+  -d '{"country":"usa","sort":"random","unhealthyBackoffMs":45000}'
 ```
 
-Refresh relays from the Mullvad CLI:
+Refresh relay inventory:
 
 ```bash
 curl -X POST http://127.0.0.1:4123/relays/refresh
@@ -72,113 +68,65 @@ Health check:
 curl http://127.0.0.1:4123/health
 ```
 
-## How Rotation Works
+## Rotation Behavior
 
-- One local proxy endpoint (`http://127.0.0.1:4123`) forwards each request through one selected Mullvad relay.
-- The runtime selection config defaults to:
+- Default config:
   - `sort: "random"`
   - `unhealthyBackoffMs: 30000`
-- If a relay fails for an upstream request, it is marked unhealthy and skipped until backoff expires.
-- `POST /rotate` updates the active selection config without restarting the server.
+- If a relay fails during proxying, it is marked unhealthy and temporarily skipped.
+- `POST /rotate` changes the active config at runtime (no restart required).
 
-## Selection Options
+## Selection Config Reference
 
-The selector accepts these fields (in query params for `GET /relays` or JSON body for `POST /rotate`):
+Use these fields in query params (`GET /relays`) or JSON body (`POST /rotate`).
 
-### Filters
+| Field | Type | Behavior |
+| --- | --- | --- |
+| `country` | `string` | Match by country code or country name (case-insensitive) |
+| `city` | `string` | Match by city code or city name (case-insensitive) |
+| `hostname` | `string` | Substring match on relay hostname |
+| `provider` | `string` | Exact provider match (case-insensitive) |
+| `ownership` | `owned \| rented` | Filter by ownership type |
+| `sort` | `random \| hostname \| country \| city` | Result ordering |
+| `unhealthyBackoffMs` | `number` | Skip duration after relay failure |
 
-- `country` (string): country code or name match (case-insensitive)
-- `city` (string): city code or name match (case-insensitive)
-- `hostname` (string): substring match on relay hostname
-- `provider` (string): exact provider match (case-insensitive)
-- `ownership` (`owned` | `rented`)
+Sort behavior:
 
-### Sort Options
-
-- `random`: random order
-- `hostname`: lexical order by hostname
-- `country`: lexical order by country, then city, then hostname
-- `city`: lexical order by city, then hostname
-
-### Other
-
-- `unhealthyBackoffMs` (number): milliseconds to skip a relay after failure
+- `random`: randomized order
+- `hostname`: lexical by hostname
+- `country`: lexical by country, then city, then hostname
+- `city`: lexical by city, then hostname
 
 ## HTTP API
 
-### `GET /relays`
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/relays` | `GET` | List relays using optional filters/sort |
+| `/rotate` | `POST` | Update active rotation config and return preview |
+| `/relays/refresh` | `POST` | Reload relay inventory from configured source |
+| `/health` | `GET` | Liveness check (`{ "ok": true }`) |
 
-Returns relay inventory after applying optional filters/sort.
+## Error Handling
 
-Example:
+- Invalid JSON in `POST /rotate` -> `400`
+- Invalid non-proxy request URL -> `400`
+- Upstream proxy failure -> `502`
+- Relay load/refresh failure (missing CLI, non-zero exit, malformed output) -> explicit error message
 
-```bash
-curl 'http://127.0.0.1:4123/relays?country=usa&sort=random&ownership=rented'
-```
+## Environment Variables
 
-Response shape:
+| Variable | Default | Description |
+| --- | --- | --- |
+| `RELAYRAD_HOST` | `127.0.0.1` | Bind host |
+| `RELAYRAD_PORT` | `4123` | Bind port |
+| `RELAYRAD_RELAY_LIST_FILE` | _unset_ | Read relay list from file instead of `mullvad relay list` |
+| `RELAYRAD_SOCKS_HOST_OVERRIDE` | _unset_ | Override SOCKS hostname for all loaded relays |
+| `RELAYRAD_SOCKS_PORT_OVERRIDE` | _unset_ | Override SOCKS port for all loaded relays |
 
-```json
-{
-  "relays": [
-    {
-      "countryName": "Sweden",
-      "countryCode": "se",
-      "cityName": "Stockholm",
-      "cityCode": "sto",
-      "hostname": "se-sto-wg-001",
-      "ipv4": "1.1.1.1",
-      "ipv6": "::1",
-      "protocol": "WireGuard",
-      "provider": "M247",
-      "ownership": "rented",
-      "socks5Hostname": "se-sto-wg-socks5-001.relays.mullvad.net",
-      "socks5Port": 1080
-    }
-  ],
-  "total": 1
-}
-```
-
-### `POST /rotate`
-
-Updates active runtime selection config and returns a preview of first 10 matching relays.
-
-Example:
+## Dev Validation
 
 ```bash
-curl -X POST http://127.0.0.1:4123/rotate \
-  -H 'content-type: application/json' \
-  -d '{"country":"usa","sort":"random","unhealthyBackoffMs":45000}'
-```
-
-### `POST /relays/refresh`
-
-Reloads relay inventory from the configured source (Mullvad CLI by default, or file if configured).
-
-### `GET /health`
-
-Simple liveness endpoint returning `{ "ok": true }`.
-
-## Error Responses
-
-- Invalid JSON body on `POST /rotate` returns HTTP `400`.
-- Invalid non-proxy request URL returns HTTP `400`.
-- Upstream proxy failures return HTTP `502`.
-- CLI load/refresh failures (missing command, non-zero exit, malformed output) return explicit error messages.
-
-## Env Vars
-
-- `RELAYRAD_HOST` default `127.0.0.1`
-- `RELAYRAD_PORT` optional port override
-- `RELAYRAD_RELAY_LIST_FILE` optional text fixture file path; when set, skips `mullvad relay list`
-- `RELAYRAD_SOCKS_HOST_OVERRIDE` optional SOCKS hostname override applied to all loaded relays
-- `RELAYRAD_SOCKS_PORT_OVERRIDE` optional SOCKS port override applied to all loaded relays
-
-## Validation
-
-```bash
-bun test
-bunx tsc --noEmit
 bun run biome-lint
+bunx tsc --noEmit
+bun test
 ```

@@ -159,15 +159,31 @@ async function relayHttpResponse(
 
 function readUntilHeaderEnd(socket: Socket): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    let buffer = Buffer.alloc(0);
+    const chunks: Buffer[] = [];
+    let totalLength = 0;
+    let trailingBytes = Buffer.alloc(0);
+    const headerEndMarker = Buffer.from("\r\n\r\n");
 
     const onData = (chunk: Buffer) => {
-      buffer = Buffer.concat([buffer, chunk]);
-      if (buffer.includes("\r\n\r\n")) {
+      chunks.push(chunk);
+      totalLength += chunk.length;
+
+      const window =
+        trailingBytes.length > 0
+          ? Buffer.concat([trailingBytes, chunk])
+          : chunk;
+
+      if (window.includes(headerEndMarker)) {
         cleanup();
         socket.pause();
-        resolve(buffer);
+        resolve(Buffer.concat(chunks, totalLength));
+        return;
       }
+
+      trailingBytes =
+        window.length > 3
+          ? Buffer.from(window.subarray(window.length - 3))
+          : Buffer.from(window);
     };
 
     const onError = (error: Error) => {

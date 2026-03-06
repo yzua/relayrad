@@ -25,27 +25,49 @@ export function createRelaySelector(
   let relays = [...initialRelays];
   let config = normalizeConfig(initialConfig);
   let cursor = 0;
+  let randomCycle: RelayRecord[] = [];
+  let randomCycleCursor = 0;
+  let randomCycleKey = "";
   const unhealthyUntil = new Map<string, number>();
 
-  const list = (now = Date.now()): RelayRecord[] => {
-    const filtered = relays.filter(
+  const filterRelays = (now: number): RelayRecord[] =>
+    relays.filter(
       (relay) =>
         matches(relay, config) &&
         !isUnhealthy(relay.hostname, now, unhealthyUntil),
     );
-    return sortRelays(filtered, config.sort);
-  };
+
+  const list = (now = Date.now()): RelayRecord[] =>
+    sortRelays(filterRelays(now), config.sort);
 
   return {
     list,
     next(now = Date.now()) {
-      const candidates = list(now);
+      const candidates = filterRelays(now);
       if (candidates.length === 0) {
         return undefined;
       }
 
-      const relay = candidates[cursor % candidates.length];
-      cursor = (cursor + 1) % candidates.length;
+      if (config.sort === "random") {
+        const cycleKey = candidates.map((relay) => relay.hostname).join("|");
+        if (
+          randomCycleKey !== cycleKey ||
+          randomCycleCursor >= randomCycle.length
+        ) {
+          randomCycle = shuffleRelays([...candidates]);
+          randomCycleCursor = 0;
+          randomCycleKey = cycleKey;
+        }
+
+        const relay = randomCycle[randomCycleCursor];
+        randomCycleCursor += 1;
+        return relay;
+      }
+
+      const ordered = sortRelays(candidates, config.sort);
+
+      const relay = ordered[cursor % ordered.length];
+      cursor = (cursor + 1) % ordered.length;
       return relay;
     },
     markUnhealthy(hostname: string, now = Date.now()) {
@@ -55,6 +77,9 @@ export function createRelaySelector(
       relays = [...nextRelays];
       config = normalizeConfig({ ...config, ...nextConfig });
       cursor = 0;
+      randomCycle = [];
+      randomCycleCursor = 0;
+      randomCycleKey = "";
     },
     getConfig() {
       return config;
@@ -137,12 +162,21 @@ function sortRelays(
       );
       return next;
     case "random":
-      next.sort(() => Math.random() - 0.5);
-      return next;
+      return shuffleRelays(next);
     default:
       next.sort((a, b) => a.hostname.localeCompare(b.hostname));
       return next;
   }
+}
+
+function shuffleRelays(relays: RelayRecord[]): RelayRecord[] {
+  for (let index = relays.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    const current = relays[index] as RelayRecord;
+    relays[index] = relays[swapIndex] as RelayRecord;
+    relays[swapIndex] = current;
+  }
+  return relays;
 }
 
 function isUnhealthy(

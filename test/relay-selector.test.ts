@@ -63,4 +63,24 @@ describe("createRelaySelector", () => {
     expect(selector.next(2_000)?.hostname).toBe("usa-sto-wg-001");
     expect(selector.next(12_000)?.hostname).toBe("usa-got-wg-001");
   });
+
+  test("uses random cycle selection without duplicates in a cycle", () => {
+    const selector = createRelaySelector(relays, {
+      country: "usa",
+      sort: "random",
+    });
+
+    const originalRandom = Math.random;
+    Math.random = () => 0.99;
+
+    try {
+      const first = selector.next()?.hostname;
+      const second = selector.next()?.hostname;
+      expect(first).toBeDefined();
+      expect(second).toBeDefined();
+      expect(first).not.toBe(second);
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
 });

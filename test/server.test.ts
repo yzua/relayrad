@@ -57,12 +57,12 @@ describe("createServer", () => {
   });
 
   test("returns relay inventory with query filters", async () => {
-    const response = await fetch(`${baseUrl}/relays?country=se`);
+    const response = await fetch(`${baseUrl}/relays?country=usa`);
     const payload = (await response.json()) as RelaysResponse;
 
     expect(response.status).toBe(200);
     expect(payload.relays).toHaveLength(1);
-    expect(payload.relays[0]?.hostname).toBe("se-sto-wg-001");
+    expect(payload.relays[0]?.hostname).toBe("usa-sto-wg-001");
   });
 
   test("updates the active rotation config", async () => {

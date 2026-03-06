@@ -1,0 +1,21 @@
+{
+  "name": "relayrad",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run index.ts",
+    "knip": "knip",
+    "biome-format": "biome format --write .",
+    "biome-lint": "biome lint ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.6",
+    "@types/bun": "latest",
+    "@types/node": "^25.3.5",
+    "knip": "^5.85.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

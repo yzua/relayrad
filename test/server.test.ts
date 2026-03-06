@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { AddressInfo } from "node:net";
-import { createServer } from "./server";
-import type { RelayRecord } from "./relay-types";
+import type { RelayRecord } from "../src/relay/relay-types";
+import { createServer } from "../src/server/server";
+import { makeRelayRecord } from "./test-fixtures";
 
 interface RelaysResponse {
   relays: RelayRecord[];
@@ -20,21 +21,8 @@ interface RefreshResponse {
 }
 
 const relays: RelayRecord[] = [
-  {
-    countryName: "Sweden",
-    countryCode: "se",
-    cityName: "Stockholm",
-    cityCode: "sto",
-    hostname: "se-sto-wg-001",
-    ipv4: "1.1.1.1",
-    ipv6: "::1",
-    protocol: "WireGuard",
-    provider: "M247",
-    ownership: "rented",
-    socks5Hostname: "se-sto-wg-001.socks5.relays.mullvad.net",
-    socks5Port: 1080,
-  },
-  {
+  makeRelayRecord(),
+  makeRelayRecord({
     countryName: "Germany",
     countryCode: "de",
     cityName: "Berlin",
@@ -42,12 +30,8 @@ const relays: RelayRecord[] = [
     hostname: "de-ber-wg-001",
     ipv4: "1.1.1.3",
     ipv6: "::3",
-    protocol: "WireGuard",
-    provider: "M247",
-    ownership: "rented",
     socks5Hostname: "de-ber-wg-001.socks5.relays.mullvad.net",
-    socks5Port: 1080,
-  },
+  }),
 ];
 
 describe("createServer", () => {

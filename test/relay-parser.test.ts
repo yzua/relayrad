@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseRelayList } from "./relay-parser";
+import { parseRelayList } from "../src/relay/relay-parser";
 
 const sampleRelayList = `Albania (al)
 \tTirana (tia) @ 41.32795°N, 19.81902°W

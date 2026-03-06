@@ -11,8 +11,8 @@ import {
   type Server,
   type Socket,
 } from "node:net";
-import type { RelayRecord } from "./relay-types";
-import { createServer } from "./server";
+import type { RelayRecord } from "../src/relay/relay-types";
+import { createServer } from "../src/server/server";
 
 async function startHttpTargetServer() {
   const server = createHttpServer((req, res) => {

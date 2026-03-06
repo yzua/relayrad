@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseRuntimeOptions } from "./runtime-options";
+import { parseRuntimeOptions } from "../src/runtime/runtime-options";
 
 describe("parseRuntimeOptions", () => {
   test("uses 4123 as the default port", () => {

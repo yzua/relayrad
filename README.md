@@ -49,7 +49,7 @@ curl -x http://127.0.0.1:4123 http://httpbin.org/ip
 List available relays:
 
 ```bash
-curl 'http://127.0.0.1:4123/relays?country=se&sort=hostname'
+curl 'http://127.0.0.1:4123/relays?country=usa&sort=hostname'
 ```
 
 Restrict rotation to a country:
@@ -57,7 +57,7 @@ Restrict rotation to a country:
 ```bash
 curl -X POST http://127.0.0.1:4123/rotate \
   -H 'content-type: application/json' \
-  -d '{"country":"se","sort":"hostname"}'
+  -d '{"country":"usa","sort":"hostname"}'
 ```
 
 Refresh relays from the Mullvad CLI:

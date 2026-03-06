@@ -79,6 +79,19 @@ describe("createServer", () => {
     expect(payload.preview[0]?.hostname).toBe("de-ber-wg-001");
   });
 
+  test("returns 400 for invalid JSON in /rotate body", async () => {
+    const response = await fetch(`${baseUrl}/rotate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{invalid",
+    });
+
+    const payload = (await response.json()) as { error?: string };
+
+    expect(response.status).toBe(400);
+    expect(payload.error).toBe("Request body must be valid JSON");
+  });
+
   test("refreshes relay inventory through the cli adapter", async () => {
     const response = await fetch(`${baseUrl}/relays/refresh`, {
       method: "POST",

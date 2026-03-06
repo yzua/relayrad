@@ -35,4 +35,13 @@ describe("parseRuntimeOptions", () => {
 
     expect(options.port).toBe(4666);
   });
+
+  test("throws when --port is provided without a value", () => {
+    expect(() =>
+      parseRuntimeOptions({
+        argv: ["bun", "index.ts", "--port"],
+        env: {},
+      }),
+    ).toThrow("Missing port value for --port");
+  });
 });

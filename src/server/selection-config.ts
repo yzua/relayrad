@@ -1,6 +1,13 @@
 import type { IncomingMessage } from "node:http";
 import type { RelaySelectionConfig } from "../relay/relay-types";
 
+export class InvalidJsonBodyError extends Error {
+  constructor(message = "Request body must be valid JSON") {
+    super(message);
+    this.name = "InvalidJsonBodyError";
+  }
+}
+
 export function selectionConfigFromUrl(url: URL): RelaySelectionConfig {
   return sanitizeSelectionConfig(
     Object.fromEntries(url.searchParams.entries()),
@@ -30,7 +37,12 @@ export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
     return {};
   }
 
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  const rawBody = Buffer.concat(chunks).toString("utf8");
+  try {
+    return JSON.parse(rawBody);
+  } catch {
+    throw new InvalidJsonBodyError();
+  }
 }
 
 function stringField(value: unknown): string | undefined {

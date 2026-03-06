@@ -13,6 +13,7 @@ import { createRelaySelector } from "../relay/relay-selector";
 import type { RelayRecord, RelaySelectionConfig } from "../relay/relay-types";
 import { defaultSelectionConfig } from "./config";
 import {
+  InvalidJsonBodyError,
   readJsonBody,
   sanitizeSelectionConfig,
   selectionConfigFromUrl,
@@ -55,6 +56,11 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
     try {
       await routeRequest(req, res, runtime, routeDeps);
     } catch (error) {
+      if (error instanceof InvalidJsonBodyError) {
+        sendJson(res, 400, { error: error.message });
+        return;
+      }
+
       sendJson(res, 500, {
         error:
           error instanceof Error ? error.message : "Unexpected server error",
@@ -125,7 +131,11 @@ async function routeRequest(
     return;
   }
 
-  const url = new URL(requestUrl, `http://${req.headers.host ?? "127.0.0.1"}`);
+  const url = parseRequestUrl(requestUrl, req.headers.host);
+  if (!url) {
+    sendJson(res, 400, { error: "Invalid request URL" });
+    return;
+  }
 
   if (req.method === "GET" && url.pathname === "/relays") {
     const filters = selectionConfigFromUrl(url);
@@ -160,6 +170,17 @@ async function routeRequest(
 
 function isProxyRequest(url: string): boolean {
   return /^http:\/\//i.test(url);
+}
+
+function parseRequestUrl(
+  requestUrl: string,
+  host: string | undefined,
+): URL | undefined {
+  try {
+    return new URL(requestUrl, `http://${host ?? "127.0.0.1"}`);
+  } catch {
+    return undefined;
+  }
 }
 
 function sendJson(

@@ -29,6 +29,10 @@ function parsePortFlag(argv: string[]): number | undefined {
       continue;
     }
 
+    if (argv[index + 1] === undefined) {
+      throw new Error(`Missing port value for ${value}`);
+    }
+
     return parsePort(argv[index + 1]);
   }
 

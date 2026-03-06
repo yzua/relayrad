@@ -1,20 +1,21 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-03-06 20:46 (Etc/GMT-3)
-**Commit:** N/A (not a git repository)
-**Branch:** N/A (not a git repository)
+**Generated:** 2026-03-06 23:20 (+03)
+**Commit:** bfddeb5
+**Branch:** main
 
 ## OVERVIEW
-
-`relayrad` is a Bun + TypeScript local rotating HTTP proxy for Mullvad relays. Runtime starts from `index.ts`, while domain modules live in `src/{server,proxy,relay,runtime}` and tests live in `test/`.
+`relayrad` is a Bun + TypeScript local rotating HTTP proxy for Mullvad relays. Runtime starts in `index.ts`, with domain logic in `src/` and verification in `test/`.
 
 ## STRUCTURE
-
 ```text
 mullvader/
 |- index.ts
-|- src/               # domain modules: server, proxy, relay, runtime
-|- test/              # Bun tests and shared test fixtures
+|- src/                 # server/proxy/relay/runtime domains
+|  |- AGENTS.md
+|  |- proxy/AGENTS.md
+|  `- relay/AGENTS.md
+|- test/                # bun:test coverage + fixtures
 |- README.md
 |- package.json
 |- tsconfig.json
@@ -22,73 +23,53 @@ mullvader/
 ```
 
 ## WHERE TO LOOK
-
-| Task                                | Location                 | Notes                                                        |
-| ----------------------------------- | ------------------------ | ------------------------------------------------------------ |
-| Runtime boot + process lifecycle    | `index.ts`               | Loads relays, creates server, handles SIGINT/SIGTERM         |
-| HTTP/CONNECT proxy transport        | `src/proxy/http-proxy.ts`      | HTTP and CONNECT proxy flow, relay retry                      |
-| SOCKS5 transport implementation     | `src/proxy/socks5.ts`          | SOCKS5 handshake/connect framing                              |
-| API endpoints + request routing     | `src/server/server.ts`         | `/relays`, `/rotate`, `/relays/refresh`, `/health`           |
-| Request payload/query sanitization  | `src/server/selection-config.ts` | Selection-config parsing and JSON body reading             |
-| Relay parsing from Mullvad CLI text | `src/relay/relay-parser.ts`    | Regex-based parser and relay record mapping                  |
-| Relay rotation/filter strategy      | `src/relay/relay-selector.ts`  | Filtering, sorting, unhealthy backoff, round-robin cursor    |
-| Runtime flags/env parsing           | `src/runtime/runtime-options.ts` | `--port` / `-p` and env fallbacks                          |
-| Core data contracts                 | `src/relay/relay-types.ts`     | Shared types for relay records/config                        |
-| Test behavior and conventions       | `test/*.test.ts`               | Bun tests under a dedicated test directory                    |
+| Task | Location | Notes |
+|------|----------|-------|
+| Boot + shutdown lifecycle | `index.ts` | Loads relays, starts server, handles SIGINT/SIGTERM |
+| Route handling + API surface | `src/server/server.ts` | `/relays`, `/rotate`, `/relays/refresh`, `/health` |
+| HTTP proxy + CONNECT tunnel | `src/proxy/http-proxy.ts` | Retry flow, upstream header parsing, relay fallback |
+| SOCKS5 handshake/transport | `src/proxy/socks5.ts` | Connect framing + socket prewarm cache |
+| Relay parse + selection strategy | `src/relay/*.ts` | CLI text parser + filter/sort/backoff/cursor state |
+| Runtime option parsing | `src/runtime/runtime-options.ts` | `--port`/`-p` precedence over env |
+| Canonical test behavior | `test/*.test.ts` | Bun tests + integration-style proxy checks |
 
 ## CODE MAP
-
-| Symbol                     | Type     | Location                 | Refs   | Role                                           |
-| -------------------------- | -------- | ------------------------ | ------ | ---------------------------------------------- |
-| `createServer`             | function | `src/server/server.ts`          | high   | Main HTTP server and routing entry             |
-| `handleHttpProxyRequest`   | function | `src/proxy/http-proxy.ts`       | high   | Proxies absolute `http://` requests via SOCKS5 |
-| `handleConnectTunnel`      | function | `src/proxy/http-proxy.ts`       | high   | Handles `CONNECT` tunnel traffic               |
-| `connectViaSocks5`         | function | `src/proxy/socks5.ts`           | high   | Performs SOCKS5 handshake/connect              |
-| `createRelaySelector`      | function | `src/relay/relay-selector.ts`   | high   | Filtering/sorting/rotation state machine       |
-| `parseRelayList`           | function | `src/relay/relay-parser.ts`     | medium | Converts CLI text to typed relay records       |
-| `parseRuntimeOptions`      | function | `src/runtime/runtime-options.ts` | medium | Runtime host/port config parser               |
-| `loadRelaysFromMullvadCli` | function | `src/relay/mullvad-cli.ts`      | medium | Spawns `mullvad relay list` and parses output  |
+| Symbol | Type | Location | Refs | Role |
+|--------|------|----------|------|------|
+| `createServer` | function | `src/server/server.ts` | 9 | HTTP server entry and route dispatch |
+| `handleHttpProxyRequest` | function | `src/proxy/http-proxy.ts` | 3 | Absolute `http://` proxy forwarding via SOCKS5 |
+| `handleConnectTunnel` | function | `src/proxy/http-proxy.ts` | 3 | `CONNECT` tunnel handling |
+| `connectViaSocks5` | function | `src/proxy/socks5.ts` | medium | SOCKS5 handshake + connect |
+| `createRelaySelector` | function | `src/relay/relay-selector.ts` | 9 | Rotation/filter state machine |
+| `parseRelayList` | function | `src/relay/relay-parser.ts` | 9 | Mullvad CLI text -> relay records |
+| `parseRuntimeOptions` | function | `src/runtime/runtime-options.ts` | low | Host/port runtime parsing |
 
 ## CONVENTIONS
-
-- Use Bun-first workflows (`bun run`, `bun test`, `bunx`) instead of Node/npm equivalents.
-- Keep tests in `test/` with `*.test.ts` suffix and import from `bun:test`.
-- Keep HTTP proxy and relay selection logic in plain TypeScript modules (no framework server layer).
-- Prefer strict runtime validation and explicit error responses over silent fallback behavior.
+- Bun-first commands in docs/examples (`bun run`, `bun test`, `bunx`).
+- Tests stay in `test/` as `*.test.ts`, using `bun:test` imports.
+- Keep frameworkless module boundaries (plain TypeScript modules, explicit wiring).
+- Prefer explicit error responses and validation over implicit fallback behavior.
 
 ## ANTI-PATTERNS (THIS PROJECT)
-
-- Do not add Node ecosystem substitutions prohibited in `CLAUDE.md` (`express`, `ws`, `ioredis`, `pg`, `better-sqlite3`, `vite`, `dotenv`).
-- Do not spread tests across mixed locations; keep tests in `test/` for consistency.
-- Do not introduce non-Bun run/test command examples in docs or task instructions.
+- Do not introduce non-Bun command examples in docs.
+- Do not scatter tests outside `test/`.
+- Do not replace project constraints from global `CLAUDE.md` (forbidden packages, safety rules).
 
 ## UNIQUE STYLES
-
-- Proxy functionality covers both absolute HTTP proxy requests and CONNECT tunnel mode.
-- Relay parsing is regex-driven from human-readable Mullvad CLI output, not JSON API responses.
-- Rotation supports unhealthy relay backoff and reconfiguration through HTTP endpoints.
+- Supports both absolute HTTP proxy requests and CONNECT tunnels.
+- Relay source is human-readable CLI output parsed by regex, not JSON API payloads.
+- Relay rotation supports unhealthy backoff and runtime reconfiguration over HTTP endpoints.
 
 ## COMMANDS
-
 ```bash
-# install deps
 bun install
-
-# run service
 bun run start
-
-# run test suite
 bun test
-
-# typecheck
 bunx tsc --noEmit
-
-# lint / format
 bun run biome-lint
 bun run biome-format
 ```
 
 ## NOTES
-
-- This workspace is currently not a git repository; commit/branch metadata is unavailable.
-- Large `node_modules/` content should be ignored when deriving project conventions.
+- Project is a git repo; keep commit/branch metadata current when regenerating this file.
+- Domain-specific guidance lives in `src/AGENTS.md`, `src/proxy/AGENTS.md`, and `src/relay/AGENTS.md`.

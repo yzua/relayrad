@@ -1,47 +1,39 @@
 # SRC KNOWLEDGE BASE
 
-**Scope:** `src/` internals only
+**Scope:** `src/` internals only.
 
 ## OVERVIEW
-`src/` contains the proxy engine, relay ingestion/parsing, filtering/rotation state, and runtime/server modules. Tests live in `test/`.
+`src/` holds runtime server wiring plus domain modules for proxy transport and relay selection. Folder-level deltas are documented in child AGENTS files.
 
 ## STRUCTURE
 ```text
 src/
-|- server/
-|  |- server.ts            # HTTP server, API routes, proxy request dispatch
-|  |- selection-config.ts  # request/query config sanitization and JSON body parsing
-|  `- config.ts            # default selection config
-|- proxy/
-|  |- http-proxy.ts        # HTTP/CONNECT transport
-|  `- socks5.ts            # SOCKS5 handshake/connect framing
-|- relay/
-|  |- relay-selector.ts    # filtering, sorting, unhealthy backoff, cursor
-|  |- relay-parser.ts      # Mullvad CLI text parser
-|  |- mullvad-cli.ts       # process spawn wrapper for `mullvad relay list`
-|  `- relay-types.ts       # shared contracts
-`- runtime/
-   `- runtime-options.ts   # argv/env host+port parsing
+|- server/                # HTTP route handling + runtime state wiring
+|- proxy/                 # upstream transport, SOCKS5 connect, CONNECT tunnel
+|  `- AGENTS.md
+|- relay/                 # CLI parsing, relay contracts, selection/backoff logic
+|  `- AGENTS.md
+`- runtime/               # argv/env runtime option parsing
 ```
 
 ## WHERE TO LOOK
 | Task | File | Notes |
 |------|------|-------|
 | Add/adjust API route behavior | `src/server/server.ts` | Keep `routeRequest` branch style and JSON response helpers |
-| Change upstream proxy behavior | `src/proxy/http-proxy.ts` | Touch relay retry loop + SOCKS5 framing carefully |
-| Modify relay matching/sorting rules | `src/relay/relay-selector.ts` | Preserve normalization + cursor semantics |
-| Adapt CLI output parsing | `src/relay/relay-parser.ts` | Keep regex line-state parsing approach |
+| Change proxy request dispatch | `src/proxy/AGENTS.md` | Child doc covers transport-specific invariants |
+| Change relay parsing/selection | `src/relay/AGENTS.md` | Child doc covers parser/selector invariants |
 | Change runtime flags/env behavior | `src/runtime/runtime-options.ts` | Preserve `--port` / `-p` precedence over env |
-| Add types for new relay metadata | `src/relay/relay-types.ts` | Keep shared contract updates centralized |
 
 ## CONVENTIONS
-- Keep side effects at boundaries (`src/server/server.ts`, `src/relay/mullvad-cli.ts`); keep pure logic in selector/parser/options modules.
-- Return explicit `undefined`/errors rather than hidden fallbacks in parsing and proxy validation paths.
-- Prefer narrow helper functions (`stringField`, `numberField`, `parseConnectTarget`) over inline ad-hoc parsing.
-- Tests should stay in `test/` and use `bun:test` imports.
+- Keep side effects at boundaries (`src/server/server.ts`, `src/relay/mullvad-cli.ts`); keep selector/parser/options modules mostly pure.
+- Preserve explicit error surfaces (`400`/`502` responses, thrown CLI parsing errors) over silent fallbacks.
+- Favor focused helpers (`parseConnectTarget`, field coercion helpers) over large inline parsing blocks.
 
 ## ANTI-PATTERNS (SRC)
-- Do not bypass `tryRelays` unhealthy marking when adding new upstream request paths.
-- Do not swap regex parser for JSON assumptions; Mullvad relay source is CLI text.
 - Do not add framework abstractions (Express-style middleware/router) in `src/server/server.ts`.
-- Do not move `test/*.test.ts` into mixed locations.
+- Do not bypass unhealthy relay marking in proxy retry paths.
+- Do not assume Mullvad relay source is JSON; parser input is CLI text.
+
+## NOTES
+- `src/proxy/AGENTS.md` and `src/relay/AGENTS.md` intentionally contain local deltas only.
+- Shared project-wide policy and commands stay in root `AGENTS.md`.

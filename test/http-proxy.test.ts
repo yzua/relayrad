@@ -15,25 +15,38 @@ import {
 } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createProxyRequestLogger } from "../src/logging/proxy-request-logger";
+import {
+  createProxyRequestLogger,
+  type ProxyRequestLogEvent,
+} from "../src/logging/proxy-request-logger";
 import type { RelayRecord } from "../src/relay/relay-types";
 import { createServer } from "../src/server/server";
+import { makeRelayRecord } from "./test-fixtures";
 
-interface CapturedLogEvent {
-  timestamp: string;
-  requestType: "http" | "connect";
-  destinationHost: string;
-  destinationPort: number;
-  relayHostname: string;
-}
-
-function createCapturedRequestLogger(events: CapturedLogEvent[]) {
+function createCapturedRequestLogger(events: ProxyRequestLogEvent[]) {
   return {
-    log(event: CapturedLogEvent) {
+    log(event: ProxyRequestLogEvent) {
       events.push(event);
     },
     close() {},
   };
+}
+
+function relayForPort(port: number, hostname: string): RelayRecord {
+  return makeRelayRecord({
+    countryName: "Testland",
+    countryCode: "tt",
+    cityName: "Example",
+    cityCode: "exp",
+    hostname,
+    ipv4: "127.0.0.1",
+    ipv6: "::1",
+    protocol: "WireGuard",
+    provider: "Test",
+    ownership: "owned",
+    socks5Hostname: "127.0.0.1",
+    socks5Port: port,
+  });
 }
 
 async function startHttpTargetServer() {
@@ -148,23 +161,6 @@ async function startSocks5Server() {
   };
 }
 
-function relayForPort(port: number, hostname: string): RelayRecord {
-  return {
-    countryName: "Testland",
-    countryCode: "tt",
-    cityName: "Example",
-    cityCode: "exp",
-    hostname,
-    ipv4: "127.0.0.1",
-    ipv6: "::1",
-    protocol: "WireGuard",
-    provider: "Test",
-    ownership: "owned",
-    socks5Hostname: "127.0.0.1",
-    socks5Port: port,
-  };
-}
-
 describe("proxy routing", () => {
   let targetServer: ReturnType<typeof createHttpServer>;
   let socksServer: Server;
@@ -172,7 +168,7 @@ describe("proxy routing", () => {
   let proxyServer: ReturnType<typeof createServer>;
   let proxyPort = 0;
   let targetPort = 0;
-  let loggedEvents: CapturedLogEvent[] = [];
+  let loggedEvents: ProxyRequestLogEvent[] = [];
 
   beforeAll(async () => {
     loggedEvents = [];

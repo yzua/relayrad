@@ -228,6 +228,5 @@ function relayFilterCacheKey(filters: RelaySelectionConfig): string {
     provider: filters.provider ?? "",
     ownership: filters.ownership ?? "",
     sort: filters.sort ?? "",
-    unhealthyBackoffMs: filters.unhealthyBackoffMs ?? "",
   });
 }

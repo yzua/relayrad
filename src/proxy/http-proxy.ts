@@ -13,8 +13,6 @@ export interface ProxyRuntime {
   requestLogger: ProxyRequestLogger;
 }
 
-export { connectViaSocks5 };
-
 export async function handleHttpProxyRequest(
   clientRequest: IncomingMessage,
   clientResponse: ServerResponse,

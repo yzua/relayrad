@@ -8,16 +8,6 @@ export interface RelaySelector {
   getConfig(): Required<RelaySelectionConfig>;
 }
 
-const defaultConfig: Required<RelaySelectionConfig> = {
-  country: "",
-  city: "",
-  hostname: "",
-  provider: "",
-  ownership: undefined as never,
-  sort: "hostname",
-  unhealthyBackoffMs: 30_000,
-};
-
 export function createRelaySelector(
   initialRelays: RelayRecord[],
   initialConfig: RelaySelectionConfig = {},
@@ -96,9 +86,8 @@ function normalizeConfig(
     hostname: config.hostname?.trim().toLowerCase() ?? "",
     provider: config.provider?.trim().toLowerCase() ?? "",
     ownership: config.ownership ?? (undefined as never),
-    sort: config.sort ?? defaultConfig.sort,
-    unhealthyBackoffMs:
-      config.unhealthyBackoffMs ?? defaultConfig.unhealthyBackoffMs,
+    sort: config.sort ?? "hostname",
+    unhealthyBackoffMs: config.unhealthyBackoffMs ?? 30_000,
   };
 }
 
@@ -163,7 +152,7 @@ function sortRelays(
       return next;
     case "random":
       return shuffleRelays(next);
-    default:
+    case "hostname":
       next.sort((a, b) => a.hostname.localeCompare(b.hostname));
       return next;
   }

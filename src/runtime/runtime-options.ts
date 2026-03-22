@@ -3,6 +3,8 @@ export interface RuntimeOptions {
   port: number;
   logProxyConsole: boolean;
   logProxySqlitePath?: string;
+  socks5Port?: number;
+  proxyAuth?: { username: string; password: string };
 }
 
 interface ParseRuntimeOptionsInput {
@@ -25,6 +27,8 @@ export function parseRuntimeOptions({
     port: flagPort ?? envPort ?? 4123,
     logProxyConsole,
     logProxySqlitePath,
+    socks5Port: parseSocks5Port(argv),
+    proxyAuth: parseProxyAuth(argv),
   };
 }
 
@@ -81,4 +85,47 @@ function parseLogProxyConsole(argv: string[]): boolean {
   }
 
   return true;
+}
+
+function parseSocks5Port(argv: string[]): number | undefined {
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] !== "--socks5-port") {
+      continue;
+    }
+
+    if (argv[index + 1] === undefined) {
+      throw new Error("Missing port value for --socks5-port");
+    }
+
+    return parsePort(argv[index + 1]);
+  }
+
+  return undefined;
+}
+
+function parseProxyAuth(
+  argv: string[],
+): { username: string; password: string } | undefined {
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] !== "--proxy-auth") {
+      continue;
+    }
+
+    const value = argv[index + 1];
+    if (!value) {
+      throw new Error("Missing value for --proxy-auth (expected user:pass)");
+    }
+
+    const separator = value.indexOf(":");
+    if (separator <= 0) {
+      throw new Error("Invalid --proxy-auth format (expected user:pass)");
+    }
+
+    return {
+      username: value.slice(0, separator),
+      password: value.slice(separator + 1),
+    };
+  }
+
+  return undefined;
 }

@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { createNoopProxyRequestLogger } from "../src/logging/proxy-request-logger";
 import type { RelayRecord } from "../src/relay/relay-types";
 import { createServer } from "../src/server/server";
+import { createStatsTracker } from "../src/stats";
 import { makeRelayRecord } from "./test-fixtures";
 
 interface RelaysResponse {
@@ -44,6 +45,7 @@ describe("createServer", () => {
       return relays;
     },
     requestLogger: createNoopProxyRequestLogger(),
+    statsTracker: createStatsTracker(),
   });
 
   let baseUrl = "";

@@ -21,6 +21,7 @@ import {
 } from "../src/logging/proxy-request-logger";
 import type { RelayRecord } from "../src/relay/relay-types";
 import { createServer } from "../src/server/server";
+import { createStatsTracker } from "../src/stats";
 import { makeRelayRecord } from "./test-fixtures";
 
 function createCapturedRequestLogger(events: ProxyRequestLogEvent[]) {
@@ -184,6 +185,7 @@ describe("proxy routing", () => {
       initialRelays: [relayForPort(socksPort, "tt-exp-wg-001")],
       refreshRelays: async () => [relayForPort(socksPort, "tt-exp-wg-001")],
       requestLogger: createCapturedRequestLogger(loggedEvents),
+      statsTracker: createStatsTracker(),
     });
 
     await proxyServer.listen(0, "127.0.0.1");
@@ -273,6 +275,7 @@ describe("proxy routing", () => {
       ],
       refreshRelays: async () => [relayForPort(socksPort, "tt-exp-wg-good")],
       requestLogger: createCapturedRequestLogger(loggedEvents),
+      statsTracker: createStatsTracker(),
     });
 
     await proxyServer.listen(0, "127.0.0.1");
@@ -358,6 +361,7 @@ describe("proxy routing", () => {
       initialRelays: [relayForPort(socksPort, "tt-exp-wg-001")],
       refreshRelays: async () => [relayForPort(socksPort, "tt-exp-wg-001")],
       requestLogger: logger,
+      statsTracker: createStatsTracker(),
     });
 
     try {
@@ -426,6 +430,7 @@ describe("proxy routing", () => {
       initialRelays: [relayForPort(socksPort, "tt-exp-wg-001")],
       refreshRelays: async () => [relayForPort(socksPort, "tt-exp-wg-001")],
       requestLogger: logger,
+      statsTracker: createStatsTracker(),
     });
 
     try {

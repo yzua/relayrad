@@ -12,6 +12,7 @@ import {
 } from "../proxy/http-proxy";
 import { createRelaySelector } from "../relay/relay-selector";
 import type { RelayRecord, RelaySelectionConfig } from "../relay/relay-types";
+import type { StatsTracker } from "../stats";
 import { defaultSelectionConfig } from "./config";
 import {
   InvalidJsonBodyError,
@@ -24,6 +25,8 @@ export interface ProxyServerDeps {
   initialRelays: RelayRecord[];
   refreshRelays: () => Promise<RelayRecord[]>;
   requestLogger: ProxyRequestLogger;
+  statsTracker: StatsTracker;
+  proxyAuth?: { username: string; password: string };
 }
 
 export interface ProxyServer {
@@ -41,6 +44,7 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
     pickRelay: () => selector.next(),
     markRelayUnhealthy: (hostname: string) => selector.markUnhealthy(hostname),
     requestLogger: deps.requestLogger,
+    statsTracker: deps.statsTracker,
   };
 
   const routeDeps: RouteDeps = {
@@ -74,11 +78,12 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
       relayListCache.clear();
       return relays;
     },
+    statsTracker: deps.statsTracker,
   };
 
   const server = createNodeServer(async (req, res) => {
     try {
-      await routeRequest(req, res, runtime, routeDeps);
+      await routeRequest(req, res, runtime, routeDeps, deps.proxyAuth);
     } catch (error) {
       if (error instanceof InvalidJsonBodyError) {
         sendJson(res, 400, { error: error.message });
@@ -93,6 +98,17 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
   });
 
   server.on("connect", (req, clientSocket, head) => {
+    if (
+      deps.proxyAuth &&
+      !checkProxyAuthRaw(req.headers["proxy-authorization"], deps.proxyAuth)
+    ) {
+      clientSocket.write(
+        'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="relayrad"\r\n\r\n',
+      );
+      clientSocket.destroy();
+      return;
+    }
+
     void handleConnectTunnel(
       req.url,
       clientSocket as Socket,
@@ -141,6 +157,7 @@ interface RouteDeps {
     config: RelaySelectionConfig,
   ) => Required<RelaySelectionConfig>;
   refresh: () => Promise<RelayRecord[]>;
+  statsTracker: StatsTracker;
 }
 
 async function routeRequest(
@@ -148,9 +165,14 @@ async function routeRequest(
   res: ServerResponse,
   runtime: ProxyRuntime,
   deps: RouteDeps,
+  proxyAuth?: { username: string; password: string },
 ): Promise<void> {
   const requestUrl = req.url ?? "/";
   if (isProxyRequest(requestUrl)) {
+    if (proxyAuth && !checkProxyAuth(req, proxyAuth)) {
+      sendProxyAuthRequired(res);
+      return;
+    }
     await handleHttpProxyRequest(req, res, runtime);
     return;
   }
@@ -186,6 +208,26 @@ async function routeRequest(
 
   if (req.method === "GET" && url.pathname === "/health") {
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/stats") {
+    const stats = deps.statsTracker.snapshot();
+    const topRelays = Object.entries(stats.relayStats)
+      .map(([hostname, s]) => ({
+        hostname,
+        requests: s.requests,
+        failures: s.failures,
+      }))
+      .sort((a, b) => b.requests - a.requests)
+      .slice(0, 10);
+    sendJson(res, 200, {
+      requestsTotal: stats.requestsTotal,
+      failuresTotal: stats.failuresTotal,
+      activeConnections: stats.activeConnections,
+      startTime: stats.startTime,
+      topRelays,
+    });
     return;
   }
 
@@ -227,6 +269,56 @@ function relayFilterCacheKey(filters: RelaySelectionConfig): string {
     hostname: filters.hostname ?? "",
     provider: filters.provider ?? "",
     ownership: filters.ownership ?? "",
+    excludeCountry: filters.excludeCountry ?? "",
     sort: filters.sort ?? "",
   });
+}
+
+function checkProxyAuth(
+  req: IncomingMessage,
+  expected: { username: string; password: string },
+): boolean {
+  const header = req.headers["proxy-authorization"];
+  if (!header || !header.startsWith("Basic ")) {
+    return false;
+  }
+
+  const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+  const separator = decoded.indexOf(":");
+  if (separator === -1) {
+    return false;
+  }
+
+  return (
+    decoded.slice(0, separator) === expected.username &&
+    decoded.slice(separator + 1) === expected.password
+  );
+}
+
+function sendProxyAuthRequired(res: ServerResponse): void {
+  res.writeHead(407, {
+    "proxy-authenticate": 'Basic realm="relayrad"',
+    "content-type": "application/json",
+  });
+  res.end(JSON.stringify({ error: "Proxy authentication required" }));
+}
+
+function checkProxyAuthRaw(
+  header: string | undefined,
+  expected: { username: string; password: string },
+): boolean {
+  if (!header || !header.startsWith("Basic ")) {
+    return false;
+  }
+
+  const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+  const separator = decoded.indexOf(":");
+  if (separator === -1) {
+    return false;
+  }
+
+  return (
+    decoded.slice(0, separator) === expected.username &&
+    decoded.slice(separator + 1) === expected.password
+  );
 }

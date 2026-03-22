@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import type { ProxyRequestLogger } from "../logging/proxy-request-logger";
 import type { RelayRecord } from "../relay/relay-types";
+import type { StatsTracker } from "../stats";
 import { connectViaSocks5 } from "./socks5";
 
 const MAX_UPSTREAM_HEADER_BYTES = 64 * 1024;
@@ -11,6 +12,7 @@ export interface ProxyRuntime {
   pickRelay: () => RelayRecord | undefined;
   markRelayUnhealthy: (hostname: string) => void;
   requestLogger: ProxyRequestLogger;
+  statsTracker: StatsTracker;
 }
 
 export async function handleHttpProxyRequest(
@@ -343,6 +345,9 @@ async function tryRelays(
   while (true) {
     const relay = runtime.pickRelay();
     if (!relay || attempted.has(relay.hostname)) {
+      if (lastError) {
+        runtime.statsTracker.recordRequestFailed();
+      }
       return lastError;
     }
 
@@ -350,9 +355,11 @@ async function tryRelays(
 
     try {
       await action(relay);
+      runtime.statsTracker.recordRequest(relay.hostname);
       return undefined;
     } catch (error) {
       runtime.markRelayUnhealthy(relay.hostname);
+      runtime.statsTracker.recordRelayFailure(relay.hostname);
       lastError =
         error instanceof Error
           ? error

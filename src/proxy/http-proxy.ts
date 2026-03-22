@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
+import type { ProxyRequestLogger } from "../logging/proxy-request-logger";
 import type { RelayRecord } from "../relay/relay-types";
 import { connectViaSocks5 } from "./socks5";
 
@@ -9,6 +10,7 @@ const UPSTREAM_HEADER_READ_TIMEOUT_MS = 10_000;
 export interface ProxyRuntime {
   pickRelay: () => RelayRecord | undefined;
   markRelayUnhealthy: (hostname: string) => void;
+  requestLogger: ProxyRequestLogger;
 }
 
 export { connectViaSocks5 };
@@ -54,7 +56,15 @@ export async function handleHttpProxyRequest(
         reject(error);
       });
 
-      relayHttpResponse(upstreamSocket, clientResponse)
+      relayHttpResponse(upstreamSocket, clientResponse, () => {
+        runtime.requestLogger.log({
+          timestamp: new Date().toISOString(),
+          requestType: "http",
+          destinationHost: targetUrl.hostname,
+          destinationPort: Number(targetUrl.port || 80),
+          relayHostname: relay.hostname,
+        });
+      })
         .then(resolve)
         .catch((error) => {
           upstreamSocket.destroy();
@@ -118,6 +128,7 @@ function writeHttpRequest(
 async function relayHttpResponse(
   upstreamSocket: Socket,
   clientResponse: ServerResponse,
+  onHeadersReady?: () => void,
 ): Promise<void> {
   const initialChunk = await readUntilHeaderEnd(upstreamSocket);
   const headerEnd = initialChunk.indexOf("\r\n\r\n");
@@ -148,6 +159,7 @@ async function relayHttpResponse(
       .trim();
   }
 
+  onHeadersReady?.();
   clientResponse.writeHead(statusCode, statusMessage, responseHeaders);
   if (bodyRemainder.length > 0) {
     clientResponse.write(bodyRemainder);
@@ -293,6 +305,13 @@ export async function handleConnectTunnel(
       destination.host,
       destination.port,
     );
+    runtime.requestLogger.log({
+      timestamp: new Date().toISOString(),
+      requestType: "connect",
+      destinationHost: destination.host,
+      destinationPort: destination.port,
+      relayHostname: relay.hostname,
+    });
     clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
 
     if (head.length > 0) {

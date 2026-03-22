@@ -32,6 +32,32 @@ Custom port:
 bun run start -- --port 4123
 ```
 
+Console proxy request logging is enabled by default.
+
+Disable console logging explicitly:
+
+```bash
+bun run start -- --no-log-proxy-console
+```
+
+Enable console logging only:
+
+```bash
+bun run start -- --log-proxy-console
+```
+
+Enable SQLite storage only:
+
+```bash
+bun run start -- --log-proxy-sqlite ./relayrad-logs.sqlite
+```
+
+Enable both console and SQLite logging:
+
+```bash
+bun run start -- --log-proxy-console --log-proxy-sqlite ./relayrad-logs.sqlite
+```
+
 ## Basic Usage
 
 Use `relayrad` as your HTTP proxy:
@@ -122,6 +148,30 @@ Sort behavior:
 | `RELAYRAD_RELAY_LIST_FILE` | _unset_ | Read relay list from file instead of `mullvad relay list` |
 | `RELAYRAD_SOCKS_HOST_OVERRIDE` | _unset_ | Override SOCKS hostname for all loaded relays |
 | `RELAYRAD_SOCKS_PORT_OVERRIDE` | _unset_ | Override SOCKS port for all loaded relays |
+
+## Proxy Logging
+
+CLI flags:
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--log-proxy-console` | enabled | Print one line per successful proxied HTTP request or CONNECT tunnel |
+| `--no-log-proxy-console` | disabled | Disable default console proxy request logging |
+| `--log-proxy-sqlite <path>` | disabled | Save one row per successful proxied HTTP request or CONNECT tunnel to a SQLite file |
+
+Stored fields in SQLite:
+
+- `timestamp`
+- `request_type` (`http` or `connect`)
+- `destination_host`
+- `destination_port`
+- `relay_hostname`
+
+Notes:
+
+- Only successful final relay usage is logged.
+- Failed relay attempts are not stored.
+- No request headers, client IPs, bodies, or full URLs are stored by this feature.
 
 ## Dev Validation
 

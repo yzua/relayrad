@@ -1,12 +1,20 @@
+import { createProxyRequestLogger } from "./src/logging/proxy-request-logger";
 import { loadRelaysFromMullvadCli } from "./src/relay/mullvad-cli";
 import { parseRelayList } from "./src/relay/relay-parser";
 import type { RelayRecord } from "./src/relay/relay-types";
 import { parseRuntimeOptions } from "./src/runtime/runtime-options";
 import { createServer } from "./src/server/server";
 
-const { host, port } = parseRuntimeOptions({
-  argv: process.argv,
-  env: process.env,
+const { host, port, logProxyConsole, logProxySqlitePath } = parseRuntimeOptions(
+  {
+    argv: process.argv,
+    env: process.env,
+  },
+);
+
+const requestLogger = createProxyRequestLogger({
+  logProxyConsole,
+  logProxySqlitePath,
 });
 
 async function loadRelays(): Promise<RelayRecord[]> {
@@ -35,6 +43,7 @@ if (initialRelays.length === 0) {
 const server = createServer({
   initialRelays,
   refreshRelays: loadRelays,
+  requestLogger,
 });
 
 await server.listen(port, host);
@@ -42,6 +51,7 @@ console.log(`relayrad listening on http://${host}:${port}`);
 console.log(`loaded ${initialRelays.length} relays`);
 
 const shutdown = async () => {
+  requestLogger.close();
   await server.close();
   process.exit(0);
 };

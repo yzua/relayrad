@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { AddressInfo } from "node:net";
+import { createNoopProxyRequestLogger } from "../src/logging/proxy-request-logger";
 import type { RelayRecord } from "../src/relay/relay-types";
 import { createServer } from "../src/server/server";
 import { makeRelayRecord } from "./test-fixtures";
@@ -42,6 +43,7 @@ describe("createServer", () => {
       refreshCalls += 1;
       return relays;
     },
+    requestLogger: createNoopProxyRequestLogger(),
   });
 
   let baseUrl = "";

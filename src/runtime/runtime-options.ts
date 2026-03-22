@@ -1,6 +1,8 @@
 export interface RuntimeOptions {
   host: string;
   port: number;
+  logProxyConsole: boolean;
+  logProxySqlitePath?: string;
 }
 
 interface ParseRuntimeOptionsInput {
@@ -15,10 +17,14 @@ export function parseRuntimeOptions({
   const host = env.RELAYRAD_HOST?.trim() || "127.0.0.1";
   const envPort = parsePort(env.RELAYRAD_PORT);
   const flagPort = parsePortFlag(argv);
+  const logProxyConsole = parseLogProxyConsole(argv);
+  const logProxySqlitePath = parseLogProxySqlitePath(argv);
 
   return {
     host,
     port: flagPort ?? envPort ?? 4123,
+    logProxyConsole,
+    logProxySqlitePath,
   };
 }
 
@@ -50,4 +56,29 @@ function parsePort(value: string | undefined): number | undefined {
   }
 
   return port;
+}
+
+function parseLogProxySqlitePath(argv: string[]): string | undefined {
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] !== "--log-proxy-sqlite") {
+      continue;
+    }
+
+    const value = argv[index + 1];
+    if (value === undefined) {
+      throw new Error("Missing SQLite path value for --log-proxy-sqlite");
+    }
+
+    return value;
+  }
+
+  return undefined;
+}
+
+function parseLogProxyConsole(argv: string[]): boolean {
+  if (argv.includes("--no-log-proxy-console")) {
+    return false;
+  }
+
+  return true;
 }

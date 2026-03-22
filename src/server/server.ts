@@ -4,6 +4,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
+import type { ProxyRequestLogger } from "../logging/proxy-request-logger";
 import {
   handleConnectTunnel,
   handleHttpProxyRequest,
@@ -22,6 +23,7 @@ import {
 export interface ProxyServerDeps {
   initialRelays: RelayRecord[];
   refreshRelays: () => Promise<RelayRecord[]>;
+  requestLogger: ProxyRequestLogger;
 }
 
 export interface ProxyServer {
@@ -38,6 +40,7 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
   const runtime: ProxyRuntime = {
     pickRelay: () => selector.next(),
     markRelayUnhealthy: (hostname: string) => selector.markUnhealthy(hostname),
+    requestLogger: deps.requestLogger,
   };
 
   const routeDeps: RouteDeps = {

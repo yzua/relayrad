@@ -1,5 +1,7 @@
+import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { once } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
 import {
   createServer as createHttpServer,
   request as httpRequest,
@@ -11,8 +13,28 @@ import {
   type Server,
   type Socket,
 } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createProxyRequestLogger } from "../src/logging/proxy-request-logger";
 import type { RelayRecord } from "../src/relay/relay-types";
 import { createServer } from "../src/server/server";
+
+interface CapturedLogEvent {
+  timestamp: string;
+  requestType: "http" | "connect";
+  destinationHost: string;
+  destinationPort: number;
+  relayHostname: string;
+}
+
+function createCapturedRequestLogger(events: CapturedLogEvent[]) {
+  return {
+    log(event: CapturedLogEvent) {
+      events.push(event);
+    },
+    close() {},
+  };
+}
 
 async function startHttpTargetServer() {
   const server = createHttpServer((req, res) => {
@@ -150,8 +172,10 @@ describe("proxy routing", () => {
   let proxyServer: ReturnType<typeof createServer>;
   let proxyPort = 0;
   let targetPort = 0;
+  let loggedEvents: CapturedLogEvent[] = [];
 
   beforeAll(async () => {
+    loggedEvents = [];
     targetServer = await startHttpTargetServer();
     const socks = await startSocks5Server();
     socksServer = socks.server;
@@ -163,6 +187,7 @@ describe("proxy routing", () => {
     proxyServer = createServer({
       initialRelays: [relayForPort(socksPort, "tt-exp-wg-001")],
       refreshRelays: async () => [relayForPort(socksPort, "tt-exp-wg-001")],
+      requestLogger: createCapturedRequestLogger(loggedEvents),
     });
 
     await proxyServer.listen(0, "127.0.0.1");
@@ -180,6 +205,8 @@ describe("proxy routing", () => {
   });
 
   test("forwards plain HTTP requests through the selected SOCKS5 relay", async () => {
+    loggedEvents.length = 0;
+
     const body = await new Promise<string>((resolve, reject) => {
       const req = httpRequest(
         {
@@ -204,9 +231,16 @@ describe("proxy routing", () => {
 
     expect(body).toBe("target:GET:/hello?via=http-proxy");
     expect(getSocksHitCount()).toBeGreaterThan(0);
+    expect(loggedEvents).toHaveLength(1);
+    expect(loggedEvents[0]?.requestType).toBe("http");
+    expect(loggedEvents[0]?.destinationHost).toBe("127.0.0.1");
+    expect(loggedEvents[0]?.destinationPort).toBe(targetPort);
+    expect(loggedEvents[0]?.relayHostname).toBe("tt-exp-wg-001");
   });
 
   test("supports HTTPS CONNECT tunneling through the selected relay", async () => {
+    loggedEvents.length = 0;
+
     const socket = createTcpConnection({ host: "127.0.0.1", port: proxyPort });
     await once(socket, "connect");
 
@@ -223,10 +257,16 @@ describe("proxy routing", () => {
     response = await readUntil(socket, "target:GET:/from-connect");
 
     expect(response.includes("target:GET:/from-connect")).toBe(true);
+    expect(loggedEvents).toHaveLength(1);
+    expect(loggedEvents[0]?.requestType).toBe("connect");
+    expect(loggedEvents[0]?.destinationHost).toBe("127.0.0.1");
+    expect(loggedEvents[0]?.destinationPort).toBe(targetPort);
+    expect(loggedEvents[0]?.relayHostname).toBe("tt-exp-wg-001");
     socket.destroy();
   });
 
   test("retries the next relay when the first upstream relay is unavailable", async () => {
+    loggedEvents.length = 0;
     await proxyServer.close();
 
     const socksPort = (socksServer.address() as AddressInfo).port;
@@ -236,6 +276,7 @@ describe("proxy routing", () => {
         relayForPort(socksPort, "tt-exp-wg-good"),
       ],
       refreshRelays: async () => [relayForPort(socksPort, "tt-exp-wg-good")],
+      requestLogger: createCapturedRequestLogger(loggedEvents),
     });
 
     await proxyServer.listen(0, "127.0.0.1");
@@ -264,9 +305,12 @@ describe("proxy routing", () => {
     });
 
     expect(body).toBe("target:GET:/retry");
+    expect(loggedEvents).toHaveLength(1);
+    expect(loggedEvents[0]?.relayHostname).toBe("tt-exp-wg-good");
   });
 
   test("returns 502 when upstream closes before full headers", async () => {
+    loggedEvents.length = 0;
     const malformedTarget = await startMalformedHttpTargetServer();
     const malformedPort = (malformedTarget.address() as AddressInfo).port;
 
@@ -302,6 +346,148 @@ describe("proxy routing", () => {
 
     expect(response.statusCode).toBe(502);
     expect(response.body).toContain("Upstream closed before headers completed");
+    expect(loggedEvents).toHaveLength(0);
+  });
+
+  test("persists HTTP proxy logs to sqlite when storage logging is enabled", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "relayrad-logs-"));
+    const dbPath = join(tempDir, "proxy.sqlite");
+    const logger = createProxyRequestLogger({
+      logProxyConsole: false,
+      logProxySqlitePath: dbPath,
+    });
+
+    const socksPort = (socksServer.address() as AddressInfo).port;
+    const sqliteProxyServer = createServer({
+      initialRelays: [relayForPort(socksPort, "tt-exp-wg-001")],
+      refreshRelays: async () => [relayForPort(socksPort, "tt-exp-wg-001")],
+      requestLogger: logger,
+    });
+
+    try {
+      await sqliteProxyServer.listen(0, "127.0.0.1");
+      const sqliteProxyPort = (sqliteProxyServer.address() as AddressInfo).port;
+
+      await new Promise<string>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            host: "127.0.0.1",
+            port: sqliteProxyPort,
+            method: "GET",
+            path: `http://127.0.0.1:${targetPort}/sqlite-http`,
+          },
+          (res) => {
+            let data = "";
+            res.setEncoding("utf8");
+            res.on("data", (chunk) => {
+              data += chunk;
+            });
+            res.on("end", () => resolve(data));
+          },
+        );
+
+        req.on("error", reject);
+        req.end();
+      });
+
+      logger.close();
+      const db = new Database(dbPath, { readonly: true });
+      const row = db
+        .query(
+          "select request_type, destination_host, destination_port, relay_hostname from proxy_request_logs order by id desc limit 1",
+        )
+        .get() as
+        | {
+            request_type: string;
+            destination_host: string;
+            destination_port: number;
+            relay_hostname: string;
+          }
+        | undefined;
+      db.close();
+
+      expect(row?.request_type).toBe("http");
+      expect(row?.destination_host).toBe("127.0.0.1");
+      expect(row?.destination_port).toBe(targetPort);
+      expect(row?.relay_hostname).toBe("tt-exp-wg-001");
+    } finally {
+      await sqliteProxyServer.close();
+      logger.close();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("persists CONNECT proxy logs to sqlite when storage logging is enabled", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "relayrad-logs-"));
+    const dbPath = join(tempDir, "proxy.sqlite");
+    const logger = createProxyRequestLogger({
+      logProxyConsole: false,
+      logProxySqlitePath: dbPath,
+    });
+
+    const socksPort = (socksServer.address() as AddressInfo).port;
+    const sqliteProxyServer = createServer({
+      initialRelays: [relayForPort(socksPort, "tt-exp-wg-001")],
+      refreshRelays: async () => [relayForPort(socksPort, "tt-exp-wg-001")],
+      requestLogger: logger,
+    });
+
+    try {
+      await sqliteProxyServer.listen(0, "127.0.0.1");
+      const sqliteProxyPort = (sqliteProxyServer.address() as AddressInfo).port;
+      const socket = createTcpConnection({
+        host: "127.0.0.1",
+        port: sqliteProxyPort,
+      });
+      await once(socket, "connect");
+
+      socket.write(
+        `CONNECT 127.0.0.1:${targetPort} HTTP/1.1\r\nHost: 127.0.0.1:${targetPort}\r\n\r\n`,
+      );
+      await readUntil(socket, "\r\n\r\n");
+      socket.destroy();
+
+      logger.close();
+      const db = new Database(dbPath, { readonly: true });
+      const row = db
+        .query(
+          "select request_type, destination_host, destination_port, relay_hostname from proxy_request_logs order by id desc limit 1",
+        )
+        .get() as
+        | {
+            request_type: string;
+            destination_host: string;
+            destination_port: number;
+            relay_hostname: string;
+          }
+        | undefined;
+      db.close();
+
+      expect(row?.request_type).toBe("connect");
+      expect(row?.destination_host).toBe("127.0.0.1");
+      expect(row?.destination_port).toBe(targetPort);
+      expect(row?.relay_hostname).toBe("tt-exp-wg-001");
+    } finally {
+      await sqliteProxyServer.close();
+      logger.close();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("fails logger startup when sqlite path is unusable", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "relayrad-logs-"));
+    const badPath = join(tempDir, "missing", "proxy.sqlite");
+
+    try {
+      expect(() =>
+        createProxyRequestLogger({
+          logProxyConsole: false,
+          logProxySqlitePath: badPath,
+        }),
+      ).toThrow();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

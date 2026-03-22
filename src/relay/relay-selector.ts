@@ -86,6 +86,7 @@ function normalizeConfig(
     hostname: config.hostname?.trim().toLowerCase() ?? "",
     provider: config.provider?.trim().toLowerCase() ?? "",
     ownership: config.ownership ?? (undefined as never),
+    excludeCountry: config.excludeCountry ?? [],
     sort: config.sort ?? "hostname",
     unhealthyBackoffMs: config.unhealthyBackoffMs ?? 30_000,
   };
@@ -99,6 +100,17 @@ function matches(
     config.country &&
     relay.countryCode.toLowerCase() !== config.country &&
     relay.countryName.toLowerCase() !== config.country
+  ) {
+    return false;
+  }
+
+  if (
+    config.excludeCountry.length > 0 &&
+    config.excludeCountry.some(
+      (excluded) =>
+        relay.countryCode.toLowerCase() === excluded ||
+        relay.countryName.toLowerCase() === excluded,
+    )
   ) {
     return false;
   }

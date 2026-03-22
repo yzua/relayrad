@@ -21,6 +21,7 @@ export interface RelayFilters {
   hostname?: string;
   provider?: string;
   ownership?: RelayOwnership;
+  excludeCountry?: string[];
 }
 
 export type RelaySort = "random" | "hostname" | "country" | "city";

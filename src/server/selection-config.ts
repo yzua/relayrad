@@ -22,6 +22,7 @@ export function sanitizeSelectionConfig(input: unknown): RelaySelectionConfig {
     hostname: stringField(value.hostname),
     provider: stringField(value.provider),
     ownership: ownershipField(value.ownership),
+    excludeCountry: stringListField(value.exclude_country),
     sort: sortField(value.sort),
     unhealthyBackoffMs: numberField(value.unhealthyBackoffMs),
   };
@@ -47,6 +48,16 @@ export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 
 function stringField(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function stringListField(value: unknown): string[] | undefined {
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+  return value
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => item.length > 0);
 }
 
 function numberField(value: unknown): number | undefined {

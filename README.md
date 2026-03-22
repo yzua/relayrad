@@ -40,7 +40,7 @@ Disable console logging explicitly:
 bun run start -- --no-log-proxy-console
 ```
 
-Enable console logging only:
+Enable console logging (already on by default, this flag is a no-op):
 
 ```bash
 bun run start -- --log-proxy-console
@@ -58,6 +58,18 @@ Enable both console and SQLite logging:
 bun run start -- --log-proxy-console --log-proxy-sqlite ./relayrad-logs.sqlite
 ```
 
+Start a SOCKS5 listener alongside the HTTP proxy:
+
+```bash
+bun run start -- --socks5-port 1080
+```
+
+Require proxy authentication:
+
+```bash
+bun run start -- --proxy-auth myuser:mypassword
+```
+
 ## Basic Usage
 
 Use `relayrad` as your HTTP proxy:
@@ -68,13 +80,34 @@ curl -x http://127.0.0.1:4123 http://httpbin.org/ip
 curl -x http://127.0.0.1:4123 http://httpbin.org/ip
 ```
 
-List currently available relays:
+Use via SOCKS5 (when `--socks5-port` is set):
+
+```bash
+curl --socks5 127.0.0.1:1080 http://httpbin.org/ip
+curl --socks5-hostname 127.0.0.1:1080 https://api.example.com
+```
+
+With authentication:
+
+```bash
+curl -x http://127.0.0.1:4123 --proxy-user myuser:mypassword http://httpbin.org/ip
+```
+
+## API
+
+### List Relays
 
 ```bash
 curl 'http://127.0.0.1:4123/relays?country=usa&sort=random'
 ```
 
-Update active rotation config:
+Exclude specific countries:
+
+```bash
+curl 'http://127.0.0.1:4123/relays?exclude_country=us,de&sort=random'
+```
+
+### Update Rotation Config
 
 ```bash
 curl -X POST http://127.0.0.1:4123/rotate \
@@ -82,16 +115,36 @@ curl -X POST http://127.0.0.1:4123/rotate \
   -d '{"country":"usa","sort":"random","unhealthyBackoffMs":45000}'
 ```
 
-Refresh relay inventory:
+### Refresh Relay Inventory
 
 ```bash
 curl -X POST http://127.0.0.1:4123/relays/refresh
 ```
 
-Health check:
+### Health Check
 
 ```bash
 curl http://127.0.0.1:4123/health
+```
+
+### Stats
+
+```bash
+curl http://127.0.0.1:4123/stats
+```
+
+Returns:
+
+```json
+{
+  "requestsTotal": 15230,
+  "failuresTotal": 42,
+  "activeConnections": 5,
+  "startTime": "2026-03-22T20:00:00.000Z",
+  "topRelays": [
+    { "hostname": "us-chi-wg-303", "requests": 230, "failures": 2 }
+  ]
+}
 ```
 
 ## Rotation Behavior
@@ -113,6 +166,7 @@ Use these fields in query params (`GET /relays`) or JSON body (`POST /rotate`).
 | `hostname` | `string` | Substring match on relay hostname |
 | `provider` | `string` | Exact provider match (case-insensitive) |
 | `ownership` | `owned \| rented` | Filter by ownership type |
+| `exclude_country` | `string` | Comma-separated country codes/names to exclude (e.g. `us,de,fr`) |
 | `sort` | `random \| hostname \| country \| city` | Result ordering |
 | `unhealthyBackoffMs` | `number` | Skip duration after relay failure |
 
@@ -131,12 +185,43 @@ Sort behavior:
 | `/rotate` | `POST` | Update active rotation config and return preview |
 | `/relays/refresh` | `POST` | Reload relay inventory from configured source |
 | `/health` | `GET` | Liveness check (`{ "ok": true }`) |
+| `/stats` | `GET` | Request stats, per-relay counts, active connections |
+
+## SOCKS5 Server Mode
+
+When `--socks5-port` is set, relayrad starts a second listener that speaks the SOCKS5 protocol directly. This lets tools that natively support SOCKS5 (curl, browsers, proxychains) connect without the HTTP CONNECT wrapper.
+
+```bash
+bun run start -- --socks5-port 1080
+# logs: relayrad SOCKS5 listening on socks5://127.0.0.1:1080
+```
+
+The SOCKS5 server uses its own relay selector (independent from the HTTP proxy). Requests are logged and tracked in stats identically.
+
+## Proxy Authentication
+
+When `--proxy-auth user:pass` is set, all proxy requests (both HTTP and CONNECT) require a `Proxy-Authorization: Basic ...` header. API endpoints (`/relays`, `/health`, `/stats`, etc.) are not affected.
+
+```bash
+# Start with auth
+bun run start -- --proxy-auth admin:secret123
+
+# Requests without auth get 407
+curl -x http://127.0.0.1:4123 http://example.com
+# => 407 Proxy Authentication Required
+
+# Requests with auth work
+curl -x http://127.0.0.1:4123 --proxy-user admin:secret123 http://example.com
+```
+
+Auth is **off by default**. Without `--proxy-auth`, all proxy requests are accepted without credentials.
 
 ## Error Handling
 
 - Invalid JSON in `POST /rotate` -> `400`
 - Invalid non-proxy request URL -> `400`
 - Upstream proxy failure -> `502`
+- Missing/invalid proxy auth (when enabled) -> `407`
 - Relay load/refresh failure (missing CLI, non-zero exit, malformed output) -> explicit error message
 
 ## Environment Variables
@@ -149,15 +234,20 @@ Sort behavior:
 | `RELAYRAD_SOCKS_HOST_OVERRIDE` | _unset_ | Override SOCKS hostname for all loaded relays |
 | `RELAYRAD_SOCKS_PORT_OVERRIDE` | _unset_ | Override SOCKS port for all loaded relays |
 
-## Proxy Logging
-
-CLI flags:
+## CLI Flags
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--log-proxy-console` | enabled | Print one line per successful proxied HTTP request or CONNECT tunnel |
-| `--no-log-proxy-console` | disabled | Disable default console proxy request logging |
-| `--log-proxy-sqlite <path>` | disabled | Save one row per successful proxied HTTP request or CONNECT tunnel to a SQLite file |
+| `--port`, `-p` | `4123` | HTTP proxy listen port |
+| `--socks5-port` | _disabled_ | SOCKS5 listener port (enables SOCKS5 server) |
+| `--proxy-auth user:pass` | _disabled_ | Require Basic auth for proxy requests |
+| `--log-proxy-console` | enabled | Print one line per proxied request/CONNECT tunnel |
+| `--no-log-proxy-console` | disabled | Disable default console proxy logging |
+| `--log-proxy-sqlite <path>` | disabled | Log proxied requests to SQLite file |
+
+## Proxy Logging
+
+Only successful final relay usage is logged. Failed relay attempts are not stored. No request headers, client IPs, bodies, or full URLs are stored by this feature.
 
 Stored fields in SQLite:
 
@@ -166,12 +256,6 @@ Stored fields in SQLite:
 - `destination_host`
 - `destination_port`
 - `relay_hostname`
-
-Notes:
-
-- Only successful final relay usage is logged.
-- Failed relay attempts are not stored.
-- No request headers, client IPs, bodies, or full URLs are stored by this feature.
 
 ## Dev Validation
 

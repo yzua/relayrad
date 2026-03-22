@@ -9,11 +9,13 @@
 ```text
 src/
 |- server/                # HTTP route handling + runtime state wiring
-|- proxy/                 # upstream transport, SOCKS5 connect, CONNECT tunnel
+|- proxy/                 # upstream transport, SOCKS5 connect, SOCKS5 server
 |  `- AGENTS.md
 |- relay/                 # CLI parsing, relay contracts, selection/backoff logic
 |  `- AGENTS.md
-`- runtime/               # argv/env runtime option parsing
+|- runtime/               # argv/env runtime option parsing
+|- logging/               # proxy request logging (console + SQLite)
+`- stats.ts               # per-relay request/failure tracking
 ```
 
 ## WHERE TO LOOK
@@ -23,6 +25,7 @@ src/
 | Change proxy request dispatch | `src/proxy/AGENTS.md` | Child doc covers transport-specific invariants |
 | Change relay parsing/selection | `src/relay/AGENTS.md` | Child doc covers parser/selector invariants |
 | Change runtime flags/env behavior | `src/runtime/runtime-options.ts` | Preserve `--port` / `-p` precedence over env |
+| Change logging behavior | `src/logging/proxy-request-logger.ts` | Console + SQLite backends, composite logger |
 
 ## CONVENTIONS
 - Keep side effects at boundaries (`src/server/server.ts`, `src/relay/mullvad-cli.ts`); keep selector/parser/options modules mostly pure.

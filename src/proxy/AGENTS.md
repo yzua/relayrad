@@ -3,7 +3,7 @@
 **Scope:** `src/proxy/` transport layer only.
 
 ## OVERVIEW
-`src/proxy` handles forwarding of absolute HTTP proxy requests and CONNECT tunnels over selected SOCKS5 relays.
+`src/proxy` handles forwarding of absolute HTTP proxy requests, CONNECT tunnels, and SOCKS5 server connections over selected SOCKS5 relays.
 
 ## OVERRIDES ROOT
 - Transport error semantics here are strict: upstream failure paths should resolve to deterministic `502` behavior.
@@ -14,8 +14,8 @@
 |------|------|-------|
 | HTTP proxy forwarding | `src/proxy/http-proxy.ts` | Absolute `http://` URL validation, request rewrite, relay retry |
 | CONNECT tunnel behavior | `src/proxy/http-proxy.ts` | CONNECT authority parse + bidirectional socket piping |
-| SOCKS5 handshake/connect | `src/proxy/socks5.ts` | Greeting, connect request framing, status validation |
-| Socket prewarm cache | `src/proxy/socks5.ts` | Short-lived prewarmed sockets keyed by relay host/port |
+| SOCKS5 client handshake | `src/proxy/socks5.ts` | Greeting, connect request framing, status validation, prewarm cache |
+| SOCKS5 server listener | `src/proxy/socks5-server.ts` | Accepts SOCKS5 clients, routes through relays via `connectViaSocks5` |
 
 ## LOCAL INVARIANTS
 - `handleHttpProxyRequest` must reject non-absolute/non-HTTP proxy URLs with `400` JSON.

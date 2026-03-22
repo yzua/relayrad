@@ -3,7 +3,7 @@
 **Scope:** `src/relay/` parsing, contracts, selection strategy.
 
 ## OVERVIEW
-`src/relay` turns Mullvad CLI output into typed relay records and applies filtering/sorting/rotation with unhealthy backoff.
+`src/relay` turns Mullvad CLI output into typed relay records and applies filtering/sorting/rotation with unhealthy backoff and country exclusion.
 
 ## OVERRIDES ROOT
 - Source-of-truth input is CLI text (`mullvad relay list`), not JSON.
@@ -20,7 +20,8 @@
 ## LOCAL INVARIANTS
 - Parser ignores malformed/incomplete rows; only fully populated relay entries are emitted.
 - `socks5Hostname` is derived from relay hostname transformation (`-wg-` -> `-wg-socks5-`) plus Mullvad domain suffix.
-- Default selector config remains stable (`sort: hostname`, `unhealthyBackoffMs: 30000`).
+- Internal `normalizeConfig` fallback: `sort: hostname`, `unhealthyBackoffMs: 30000`. Server overrides to `sort: random`.
+- `excludeCountry` matches against both `countryCode` and `countryName` (case-insensitive).
 - `next()` must return deterministic round-robin for non-random sorts and cycle-based random ordering for `sort=random`.
 
 ## ANTI-PATTERNS

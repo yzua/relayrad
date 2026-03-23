@@ -278,21 +278,7 @@ function checkProxyAuth(
   req: IncomingMessage,
   expected: { username: string; password: string },
 ): boolean {
-  const header = req.headers["proxy-authorization"];
-  if (!header || !header.startsWith("Basic ")) {
-    return false;
-  }
-
-  const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
-  const separator = decoded.indexOf(":");
-  if (separator === -1) {
-    return false;
-  }
-
-  return (
-    decoded.slice(0, separator) === expected.username &&
-    decoded.slice(separator + 1) === expected.password
-  );
+  return checkProxyAuthRaw(req.headers["proxy-authorization"], expected);
 }
 
 function sendProxyAuthRequired(res: ServerResponse): void {

@@ -82,14 +82,43 @@ if (socks5Port) {
   console.log(`relayrad SOCKS5 listening on socks5://${host}:${socks5Port}`);
 }
 
-const shutdown = async () => {
-  requestLogger.close();
-  if (socks5) {
-    await socks5.close();
+const SHUTDOWN_TIMEOUT_MS = 10_000;
+let shutdownPromise: Promise<void> | undefined;
+
+function shutdown(): Promise<void> {
+  if (shutdownPromise) {
+    return shutdownPromise;
   }
-  await server.close();
-  process.exit(0);
-};
+
+  shutdownPromise = (async () => {
+    console.log("relayrad shutting down...");
+
+    const timeout = setTimeout(() => {
+      console.error(
+        `relayrad shutdown timed out after ${SHUTDOWN_TIMEOUT_MS}ms, forcing exit`,
+      );
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS);
+
+    try {
+      requestLogger.close();
+
+      if (socks5) {
+        await socks5.close();
+      }
+
+      await server.close();
+      console.log("relayrad shut down cleanly");
+    } catch (error) {
+      console.error("relayrad shutdown error:", error);
+    } finally {
+      clearTimeout(timeout);
+      process.exit(0);
+    }
+  })();
+
+  return shutdownPromise;
+}
 
 process.on("SIGINT", () => {
   void shutdown();

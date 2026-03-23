@@ -1,6 +1,8 @@
 export type RelayOwnership = "owned" | "rented";
+export type RelaySource = "mullvad" | "tor";
 
 export interface RelayRecord {
+  source: RelaySource;
   countryName: string;
   countryCode: string;
   cityName: string;
@@ -13,6 +15,9 @@ export interface RelayRecord {
   ownership: RelayOwnership;
   socks5Hostname: string;
   socks5Port: number;
+  socks5Username?: string | undefined;
+  socks5Password?: string | undefined;
+  socks5UniqueAuth?: boolean | undefined;
 }
 
 export interface RelayFilters {

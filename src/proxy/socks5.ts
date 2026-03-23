@@ -18,7 +18,21 @@ export async function connectViaSocks5(
   const socket = await openSocket(relay.socks5Hostname, relay.socks5Port);
 
   try {
-    await writeAndExpect(socket, Buffer.from([0x05, 0x01, 0x00]), 2);
+    const auth = resolveSocks5Auth(relay);
+    const hasAuth = auth !== undefined;
+    const methodRequest = hasAuth
+      ? Buffer.from([0x05, 0x01, 0x02])
+      : Buffer.from([0x05, 0x01, 0x00]);
+    const methodResponse = await writeAndExpect(socket, methodRequest, 2);
+
+    if (methodResponse[1] === 0x02 && hasAuth) {
+      await socks5Auth(socket, auth.username, auth.password);
+    } else if (methodResponse[1] !== 0x00) {
+      throw new Error(
+        `SOCKS5 auth negotiation failed with method ${methodResponse[1]}`,
+      );
+    }
+
     const request = buildSocks5ConnectRequest(targetHost, targetPort);
     const response = await writeAndExpect(socket, request, 10);
 
@@ -33,6 +47,26 @@ export async function connectViaSocks5(
     socket.destroy();
     throw error;
   }
+}
+
+function resolveSocks5Auth(
+  relay: RelayRecord,
+): { username: string; password: string } | undefined {
+  if (relay.socks5UniqueAuth) {
+    return {
+      username: `${relay.hostname}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      password: relay.socks5Password ?? "",
+    };
+  }
+
+  if (relay.socks5Username === undefined) {
+    return undefined;
+  }
+
+  return {
+    username: relay.socks5Username,
+    password: relay.socks5Password ?? "",
+  };
 }
 
 function buildSocks5ConnectRequest(
@@ -120,6 +154,31 @@ function writeAndExpect(
     socket.on("error", onError);
     socket.write(payload);
   });
+}
+
+async function socks5Auth(
+  socket: Socket,
+  username: string,
+  password: string,
+): Promise<void> {
+  const userBuf = Buffer.from(username, "utf8");
+  const passBuf = Buffer.from(password, "utf8");
+
+  if (userBuf.length > 255 || passBuf.length > 255) {
+    throw new Error("SOCKS5 auth credentials too long (max 255 bytes each)");
+  }
+
+  const payload = Buffer.concat([
+    Buffer.from([0x01, userBuf.length]),
+    userBuf,
+    Buffer.from([passBuf.length]),
+    passBuf,
+  ]);
+
+  const response = await writeAndExpect(socket, payload, 2);
+  if (response[1] !== 0x00) {
+    throw new Error("SOCKS5 username/password authentication rejected");
+  }
 }
 
 function relaySocketKey(host: string, port: number): string {

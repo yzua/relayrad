@@ -1,3 +1,5 @@
+import { parsePortValue, parseProxyAuthValue } from "./runtime-validation";
+
 export interface RuntimeOptions {
   host: string;
   port: number;
@@ -5,6 +7,10 @@ export interface RuntimeOptions {
   logProxySqlitePath?: string | undefined;
   socks5Port?: number | undefined;
   proxyAuth?: { username: string; password: string } | undefined;
+  useMullvad: boolean;
+  useTor: boolean;
+  torPort: number;
+  noTui: boolean;
 }
 
 interface ParseRuntimeOptionsInput {
@@ -17,10 +23,11 @@ export function parseRuntimeOptions({
   env,
 }: ParseRuntimeOptionsInput): RuntimeOptions {
   const host = env["RELAYRAD_HOST"]?.trim() || "127.0.0.1";
-  const envPort = parsePort(env["RELAYRAD_PORT"]);
+  const envPort = parsePortValue(env["RELAYRAD_PORT"]);
   const flagPort = parsePortFlag(argv);
   const logProxyConsole = parseLogProxyConsole(argv);
   const logProxySqlitePath = parseLogProxySqlitePath(argv);
+  const torPort = parseTorPort(argv);
 
   return {
     host,
@@ -29,6 +36,10 @@ export function parseRuntimeOptions({
     logProxySqlitePath,
     socks5Port: parseSocks5Port(argv),
     proxyAuth: parseProxyAuth(argv),
+    useMullvad: parseFlag(argv, "--mullvad"),
+    useTor: parseFlag(argv, "--tor"),
+    torPort,
+    noTui: parseFlag(argv, "--no-tui"),
   };
 }
 
@@ -43,23 +54,10 @@ function parsePortFlag(argv: string[]): number | undefined {
       throw new Error(`Missing port value for ${value}`);
     }
 
-    return parsePort(argv[index + 1]);
+    return parsePortValue(argv[index + 1]);
   }
 
   return undefined;
-}
-
-function parsePort(value: string | undefined): number | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  const port = Number(value);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`Invalid port: ${value}`);
-  }
-
-  return port;
 }
 
 function parseLogProxySqlitePath(argv: string[]): string | undefined {
@@ -97,7 +95,7 @@ function parseSocks5Port(argv: string[]): number | undefined {
       throw new Error("Missing port value for --socks5-port");
     }
 
-    return parsePort(argv[index + 1]);
+    return parsePortValue(argv[index + 1]);
   }
 
   return undefined;
@@ -116,16 +114,28 @@ function parseProxyAuth(
       throw new Error("Missing value for --proxy-auth (expected user:pass)");
     }
 
-    const separator = value.indexOf(":");
-    if (separator <= 0) {
-      throw new Error("Invalid --proxy-auth format (expected user:pass)");
-    }
-
-    return {
-      username: value.slice(0, separator),
-      password: value.slice(separator + 1),
-    };
+    return parseProxyAuthValue(value);
   }
 
   return undefined;
+}
+
+function parseTorPort(argv: string[]): number {
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] !== "--tor-port") {
+      continue;
+    }
+
+    if (argv[index + 1] === undefined) {
+      throw new Error("Missing port value for --tor-port");
+    }
+
+    return parsePortValue(argv[index + 1]) ?? 9050;
+  }
+
+  return 9050;
+}
+
+function parseFlag(argv: string[], flag: string): boolean {
+  return argv.includes(flag);
 }

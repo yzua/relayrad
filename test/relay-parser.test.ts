@@ -18,6 +18,7 @@ describe("parseRelayList", () => {
 
     expect(relays).toHaveLength(4);
     expect(relays[0]).toEqual({
+      source: "mullvad",
       countryName: "Albania",
       countryCode: "al",
       cityName: "Tirana",

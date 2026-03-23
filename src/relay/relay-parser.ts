@@ -57,6 +57,7 @@ export function parseRelayList(output: string): RelayRecord[] {
     }
 
     relays.push({
+      source: "mullvad",
       countryName: currentCountryName,
       countryCode: currentCountryCode,
       cityName: currentCityName,

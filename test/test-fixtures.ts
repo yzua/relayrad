@@ -4,6 +4,7 @@ export function makeRelayRecord(
   overrides: Partial<RelayRecord> = {},
 ): RelayRecord {
   return {
+    source: "mullvad",
     countryName: "Sweden",
     countryCode: "usa",
     cityName: "Stockholm",

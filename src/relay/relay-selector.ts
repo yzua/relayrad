@@ -28,9 +28,11 @@ export function createRelaySelector(
   let relays = [...initialRelays];
   let config = normalizeConfig(initialConfig);
   let cursor = 0;
-  let randomCycle: RelayRecord[] = [];
-  let randomCycleCursor = 0;
-  let randomCycleKey = "";
+  let randomSourceOrder: string[] = [];
+  let randomSourceCursor = 0;
+  let randomSourceKey = "";
+  let randomSourceRelayCycles = new Map<string, RelayRecord[]>();
+  let randomSourceRelayCursors = new Map<string, number>();
   const unhealthyUntil = new Map<string, number>();
 
   const filterRelays = (now: number): RelayRecord[] =>
@@ -52,19 +54,7 @@ export function createRelaySelector(
       }
 
       if (config.sort === "random") {
-        const cycleKey = candidates.map((relay) => relay.hostname).join("|");
-        if (
-          randomCycleKey !== cycleKey ||
-          randomCycleCursor >= randomCycle.length
-        ) {
-          randomCycle = shuffleRelays([...candidates]);
-          randomCycleCursor = 0;
-          randomCycleKey = cycleKey;
-        }
-
-        const relay = randomCycle[randomCycleCursor];
-        randomCycleCursor += 1;
-        return relay;
+        return nextRandomRelay(candidates);
       }
 
       const ordered = sortRelays(candidates, config.sort);
@@ -80,14 +70,113 @@ export function createRelaySelector(
       relays = [...nextRelays];
       config = normalizeConfig({ ...config, ...nextConfig });
       cursor = 0;
-      randomCycle = [];
-      randomCycleCursor = 0;
-      randomCycleKey = "";
+      randomSourceOrder = [];
+      randomSourceCursor = 0;
+      randomSourceKey = "";
+      randomSourceRelayCycles = new Map();
+      randomSourceRelayCursors = new Map();
     },
     getConfig() {
       return config;
     },
   };
+
+  function nextRandomRelay(candidates: RelayRecord[]): RelayRecord | undefined {
+    const candidatesBySource = groupRelaysBySource(candidates);
+    if (candidatesBySource.size === 1) {
+      return nextSingleSourceRandomRelay(candidates);
+    }
+
+    const sourceKey = Array.from(candidatesBySource.entries())
+      .map(
+        ([source, sourceRelays]) =>
+          `${source}:${sourceRelays.map((relay) => relay.hostname).join(",")}`,
+      )
+      .join("|");
+
+    if (
+      randomSourceKey !== sourceKey ||
+      randomSourceCursor >= randomSourceOrder.length
+    ) {
+      randomSourceOrder = shuffleValues(Array.from(candidatesBySource.keys()));
+      randomSourceCursor = 0;
+      randomSourceKey = sourceKey;
+      randomSourceRelayCycles = new Map();
+      randomSourceRelayCursors = new Map();
+    }
+
+    if (randomSourceOrder.length === 0) {
+      return undefined;
+    }
+
+    const source =
+      randomSourceOrder[randomSourceCursor % randomSourceOrder.length];
+    if (!source) {
+      return undefined;
+    }
+    randomSourceCursor = (randomSourceCursor + 1) % randomSourceOrder.length;
+
+    const sourceRelays = candidatesBySource.get(source);
+    if (!sourceRelays || sourceRelays.length === 0) {
+      return undefined;
+    }
+
+    const existingCycle = randomSourceRelayCycles.get(source);
+    const existingCursor = randomSourceRelayCursors.get(source) ?? 0;
+    const sourceRelayKey = sourceRelays
+      .map((relay) => relay.hostname)
+      .join("|");
+    const existingKey = existingCycle
+      ?.map((relay) => relay.hostname)
+      .sort()
+      .join("|");
+
+    if (
+      !existingCycle ||
+      existingKey !== sourceRelayKey ||
+      existingCursor >= existingCycle.length
+    ) {
+      randomSourceRelayCycles.set(source, shuffleRelays([...sourceRelays]));
+      randomSourceRelayCursors.set(source, 0);
+    }
+
+    const cycle = randomSourceRelayCycles.get(source);
+    const cursor = randomSourceRelayCursors.get(source) ?? 0;
+    const relay = cycle?.[cursor];
+    randomSourceRelayCursors.set(source, cursor + 1);
+    return relay;
+  }
+
+  function nextSingleSourceRandomRelay(
+    candidates: RelayRecord[],
+  ): RelayRecord | undefined {
+    const cycleKey = candidates.map((relay) => relay.hostname).join("|");
+    const source = candidates[0]?.source;
+    if (!source) {
+      return undefined;
+    }
+
+    const existingCycle = randomSourceRelayCycles.get(source);
+    const existingCursor = randomSourceRelayCursors.get(source) ?? 0;
+
+    if (
+      randomSourceKey !== cycleKey ||
+      !existingCycle ||
+      existingCursor >= existingCycle.length
+    ) {
+      randomSourceKey = cycleKey;
+      randomSourceRelayCycles = new Map([
+        [source, shuffleRelays([...candidates])],
+      ]);
+      randomSourceRelayCursors = new Map([[source, 0]]);
+    }
+
+    const cycle = randomSourceRelayCycles.get(source);
+    const cursor = randomSourceRelayCursors.get(source) ?? 0;
+    const relay = cycle?.[cursor];
+    randomSourceRelayCursors.set(source, cursor + 1);
+    return relay;
+  }
 }
 
 function normalizeConfig(
@@ -186,14 +275,32 @@ function sortRelays(
   }
 }
 
-function shuffleRelays(relays: RelayRecord[]): RelayRecord[] {
-  for (let index = relays.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(Math.random() * (index + 1));
-    const current = relays[index] as RelayRecord;
-    relays[index] = relays[swapIndex] as RelayRecord;
-    relays[swapIndex] = current;
+function groupRelaysBySource(
+  relays: RelayRecord[],
+): Map<string, RelayRecord[]> {
+  const bySource = new Map<string, RelayRecord[]>();
+
+  for (const relay of relays) {
+    const sourceRelays = bySource.get(relay.source) ?? [];
+    sourceRelays.push(relay);
+    bySource.set(relay.source, sourceRelays);
   }
-  return relays;
+
+  return bySource;
+}
+
+function shuffleRelays(relays: RelayRecord[]): RelayRecord[] {
+  return shuffleValues(relays);
+}
+
+function shuffleValues<T>(values: T[]): T[] {
+  for (let index = values.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    const current = values[index] as T;
+    values[index] = values[swapIndex] as T;
+    values[swapIndex] = current;
+  }
+  return values;
 }
 
 function isUnhealthy(

@@ -27,6 +27,21 @@ const relays: RelayRecord[] = [
   }),
 ];
 
+const mixedSourceRelays: RelayRecord[] = [
+  makeRelayRecord({ hostname: "mullvad-a", source: "mullvad" }),
+  makeRelayRecord({ hostname: "mullvad-b", source: "mullvad" }),
+  makeRelayRecord({ hostname: "mullvad-c", source: "mullvad" }),
+  makeRelayRecord({
+    hostname: "tor-relay",
+    source: "tor",
+    countryName: "Tor",
+    countryCode: "tor",
+    cityName: "Tor Network",
+    cityCode: "tor",
+    provider: "tor-project",
+  }),
+];
+
 describe("createRelaySelector", () => {
   test("filters relays and sorts by hostname", () => {
     const selector = createRelaySelector(relays, {
@@ -79,6 +94,85 @@ describe("createRelaySelector", () => {
       expect(first).toBeDefined();
       expect(second).toBeDefined();
       expect(first).not.toBe(second);
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+
+  test("balances random selection across sources before reusing same source", () => {
+    const selector = createRelaySelector(mixedSourceRelays, {
+      sort: "random",
+    });
+
+    const originalRandom = Math.random;
+    Math.random = () => 0.99;
+
+    try {
+      const first = selector.next();
+      const second = selector.next();
+
+      expect(first?.source).toBeDefined();
+      expect(second?.source).toBeDefined();
+      expect(first?.source).not.toBe(second?.source);
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+
+  test("keeps selecting tor regularly in mixed-source random mode", () => {
+    const selector = createRelaySelector(mixedSourceRelays, {
+      sort: "random",
+    });
+
+    const originalRandom = Math.random;
+    Math.random = () => 0.99;
+
+    try {
+      const pickedSources: string[] = [];
+
+      for (let index = 0; index < 10; index += 1) {
+        const relay = selector.next();
+        expect(relay).toBeDefined();
+        if (relay) {
+          pickedSources.push(relay.source);
+        }
+      }
+
+      expect(new Set(pickedSources)).toEqual(new Set(["mullvad", "tor"]));
+      expect(pickedSources.filter((source) => source === "tor")).toHaveLength(
+        5,
+      );
+      expect(
+        pickedSources.filter((source) => source === "mullvad"),
+      ).toHaveLength(5);
+
+      for (let index = 1; index < pickedSources.length; index += 1) {
+        expect(pickedSources[index]).not.toBe(pickedSources[index - 1]);
+      }
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+
+  test("continues rotating inside the mullvad source while balancing sources", () => {
+    const selector = createRelaySelector(mixedSourceRelays, {
+      sort: "random",
+    });
+
+    const originalRandom = Math.random;
+    Math.random = () => 0.99;
+
+    try {
+      const seenMullvad = new Set<string>();
+      for (let index = 0; index < 8; index += 1) {
+        const relay = selector.next();
+        expect(relay).toBeDefined();
+        if (relay?.source === "mullvad") {
+          seenMullvad.add(relay.hostname);
+        }
+      }
+
+      expect(seenMullvad.size).toBe(3);
     } finally {
       Math.random = originalRandom;
     }

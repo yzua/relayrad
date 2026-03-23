@@ -1,5 +1,6 @@
 import { createServer as createTcpServer, type Socket } from "node:net";
 import type { ProxyRuntime } from "./http-proxy";
+import { type RelayRetryDeps, tryRelays } from "./relay-retry";
 import { connectViaSocks5 } from "./socks5";
 
 export interface Socks5Server {
@@ -89,7 +90,13 @@ async function handleClient(
   const portBuf = await readExact(clientSocket, 2);
   const targetPort = portBuf.readUInt16BE(0);
 
-  const lastError = await tryRelaysSocks5(runtime, async (relay) => {
+  const retryDeps: RelayRetryDeps = {
+    pickRelay: runtime.pickRelay,
+    markRelayUnhealthy: runtime.markRelayUnhealthy,
+    statsTracker: runtime.statsTracker,
+  };
+
+  const lastError = await tryRelays(retryDeps, async (relay) => {
     const upstreamSocket = await connectViaSocks5(
       relay,
       targetHost,
@@ -129,39 +136,6 @@ async function handleClient(
   if (lastError) {
     clientSocket.write(Buffer.from([0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));
     clientSocket.destroy();
-  }
-}
-
-async function tryRelaysSocks5(
-  runtime: ProxyRuntime,
-  action: (relay: import("../relay/relay-types").RelayRecord) => Promise<void>,
-): Promise<Error | undefined> {
-  const attempted = new Set<string>();
-  let lastError: Error | undefined;
-
-  while (true) {
-    const relay = runtime.pickRelay();
-    if (!relay || attempted.has(relay.hostname)) {
-      if (lastError) {
-        runtime.statsTracker.recordRequestFailed();
-      }
-      return lastError;
-    }
-
-    attempted.add(relay.hostname);
-
-    try {
-      await action(relay);
-      runtime.statsTracker.recordRequest(relay.hostname);
-      return undefined;
-    } catch (error) {
-      runtime.markRelayUnhealthy(relay.hostname);
-      runtime.statsTracker.recordRelayFailure(relay.hostname);
-      lastError =
-        error instanceof Error
-          ? error
-          : new Error("Failed to use upstream relay");
-    }
   }
 }
 

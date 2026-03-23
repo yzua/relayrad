@@ -3,6 +3,7 @@ import type { Socket } from "node:net";
 import type { ProxyRequestLogger } from "../logging/proxy-request-logger";
 import type { RelayRecord } from "../relay/relay-types";
 import type { StatsTracker } from "../stats";
+import { tryRelays } from "./relay-retry";
 import { connectViaSocks5 } from "./socks5";
 
 const MAX_UPSTREAM_HEADER_BYTES = 64 * 1024;
@@ -36,42 +37,51 @@ export async function handleHttpProxyRequest(
   headers.host = targetUrl.host;
   headers.connection = "close";
 
-  const lastError = await tryRelays(runtime, async (relay) => {
-    const upstreamSocket = await connectViaSocks5(
-      relay,
-      targetUrl.hostname,
-      Number(targetUrl.port || 80),
-    );
-
-    await new Promise<void>((resolve, reject) => {
-      upstreamSocket.once("error", reject);
-      writeHttpRequest(
-        upstreamSocket,
-        clientRequest.method ?? "GET",
-        `${targetUrl.pathname}${targetUrl.search}`,
-        headers,
+  const lastError = await tryRelays(
+    {
+      pickRelay: runtime.pickRelay,
+      markRelayUnhealthy: runtime.markRelayUnhealthy,
+      statsTracker: runtime.statsTracker,
+    },
+    async (relay) => {
+      const upstreamSocket = await connectViaSocks5(
+        relay,
+        targetUrl.hostname,
+        Number(targetUrl.port || 80),
       );
-      void forwardRequestBody(clientRequest, upstreamSocket).catch((error) => {
-        upstreamSocket.destroy();
-        reject(error);
-      });
 
-      relayHttpResponse(upstreamSocket, clientResponse, () => {
-        runtime.requestLogger.log({
-          timestamp: new Date().toISOString(),
-          requestType: "http",
-          destinationHost: targetUrl.hostname,
-          destinationPort: Number(targetUrl.port || 80),
-          relayHostname: relay.hostname,
-        });
-      })
-        .then(resolve)
-        .catch((error) => {
-          upstreamSocket.destroy();
-          reject(error);
-        });
-    });
-  });
+      await new Promise<void>((resolve, reject) => {
+        upstreamSocket.once("error", reject);
+        writeHttpRequest(
+          upstreamSocket,
+          clientRequest.method ?? "GET",
+          `${targetUrl.pathname}${targetUrl.search}`,
+          headers,
+        );
+        void forwardRequestBody(clientRequest, upstreamSocket).catch(
+          (error) => {
+            upstreamSocket.destroy();
+            reject(error);
+          },
+        );
+
+        relayHttpResponse(upstreamSocket, clientResponse, () => {
+          runtime.requestLogger.log({
+            timestamp: new Date().toISOString(),
+            requestType: "http",
+            destinationHost: targetUrl.hostname,
+            destinationPort: Number(targetUrl.port || 80),
+            relayHostname: relay.hostname,
+          });
+        })
+          .then(resolve)
+          .catch((error) => {
+            upstreamSocket.destroy();
+            reject(error);
+          });
+      });
+    },
+  );
 
   if (lastError) {
     clientResponse.writeHead(502, { "content-type": "application/json" });
@@ -299,72 +309,46 @@ export async function handleConnectTunnel(
     return;
   }
 
-  const lastError = await tryRelays(runtime, async (relay) => {
-    const upstreamSocket = await connectViaSocks5(
-      relay,
-      destination.host,
-      destination.port,
-    );
-    runtime.requestLogger.log({
-      timestamp: new Date().toISOString(),
-      requestType: "connect",
-      destinationHost: destination.host,
-      destinationPort: destination.port,
-      relayHostname: relay.hostname,
-    });
-    clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+  const lastError = await tryRelays(
+    {
+      pickRelay: runtime.pickRelay,
+      markRelayUnhealthy: runtime.markRelayUnhealthy,
+      statsTracker: runtime.statsTracker,
+    },
+    async (relay) => {
+      const upstreamSocket = await connectViaSocks5(
+        relay,
+        destination.host,
+        destination.port,
+      );
+      runtime.requestLogger.log({
+        timestamp: new Date().toISOString(),
+        requestType: "connect",
+        destinationHost: destination.host,
+        destinationPort: destination.port,
+        relayHostname: relay.hostname,
+      });
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
 
-    if (head.length > 0) {
-      upstreamSocket.write(head);
-    }
+      if (head.length > 0) {
+        upstreamSocket.write(head);
+      }
 
-    clientSocket.pipe(upstreamSocket);
-    upstreamSocket.pipe(clientSocket);
+      clientSocket.pipe(upstreamSocket);
+      upstreamSocket.pipe(clientSocket);
 
-    await Promise.race([
-      onceSocketClosed(clientSocket),
-      onceSocketClosed(upstreamSocket),
-    ]);
-  });
+      await Promise.race([
+        onceSocketClosed(clientSocket),
+        onceSocketClosed(upstreamSocket),
+      ]);
+    },
+  );
 
   if (lastError) {
     clientSocket.write(
       `HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(lastError.message)}\r\n\r\n${lastError.message}`,
     );
     clientSocket.destroy();
-  }
-}
-
-async function tryRelays(
-  runtime: ProxyRuntime,
-  action: (relay: RelayRecord) => Promise<void>,
-): Promise<Error | undefined> {
-  const attempted = new Set<string>();
-  let lastError: Error | undefined;
-
-  while (true) {
-    const relay = runtime.pickRelay();
-    if (!relay || attempted.has(relay.hostname)) {
-      if (lastError) {
-        runtime.statsTracker.recordRequestFailed();
-      }
-      return lastError;
-    }
-
-    attempted.add(relay.hostname);
-
-    try {
-      await action(relay);
-      runtime.statsTracker.recordRequest(relay.hostname);
-      return undefined;
-    } catch (error) {
-      runtime.markRelayUnhealthy(relay.hostname);
-      runtime.statsTracker.recordRelayFailure(relay.hostname);
-      lastError =
-        error instanceof Error
-          ? error
-          : new Error("Failed to use upstream relay");
-    }
   }
 }
 

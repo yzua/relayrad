@@ -1,11 +1,24 @@
-import type { RelayRecord, RelaySelectionConfig } from "./relay-types";
+import type {
+  RelayOwnership,
+  RelayRecord,
+  RelaySelectionConfig,
+  RelaySort,
+} from "./relay-types";
 
 export interface RelaySelector {
   list(now?: number): RelayRecord[];
   next(now?: number): RelayRecord | undefined;
   markUnhealthy(hostname: string, now?: number): void;
   update(relays: RelayRecord[], config?: RelaySelectionConfig): void;
-  getConfig(): Required<RelaySelectionConfig>;
+  getConfig(): ResolvedRelaySelectionConfig;
+}
+
+export interface ResolvedRelaySelectionConfig
+  extends Required<Omit<RelaySelectionConfig, "ownership">> {
+  ownership?: RelayOwnership | undefined;
+  unhealthyBackoffMs: number;
+  excludeCountry: string[];
+  sort: RelaySort;
 }
 
 export function createRelaySelector(
@@ -79,13 +92,13 @@ export function createRelaySelector(
 
 function normalizeConfig(
   config: RelaySelectionConfig,
-): Required<RelaySelectionConfig> {
+): ResolvedRelaySelectionConfig {
   return {
     country: config.country?.trim().toLowerCase() ?? "",
     city: config.city?.trim().toLowerCase() ?? "",
     hostname: config.hostname?.trim().toLowerCase() ?? "",
     provider: config.provider?.trim().toLowerCase() ?? "",
-    ownership: config.ownership ?? (undefined as never),
+    ownership: config.ownership,
     excludeCountry: config.excludeCountry ?? [],
     sort: config.sort ?? "hostname",
     unhealthyBackoffMs: config.unhealthyBackoffMs ?? 30_000,
@@ -94,7 +107,7 @@ function normalizeConfig(
 
 function matches(
   relay: RelayRecord,
-  config: Required<RelaySelectionConfig>,
+  config: ResolvedRelaySelectionConfig,
 ): boolean {
   if (
     config.country &&
@@ -105,6 +118,7 @@ function matches(
   }
 
   if (
+    config.excludeCountry &&
     config.excludeCountry.length > 0 &&
     config.excludeCountry.some(
       (excluded) =>
@@ -143,7 +157,7 @@ function matches(
 
 function sortRelays(
   relays: RelayRecord[],
-  sort: Required<RelaySelectionConfig>["sort"],
+  sort: ResolvedRelaySelectionConfig["sort"],
 ): RelayRecord[] {
   const next = [...relays];
   switch (sort) {
@@ -166,6 +180,8 @@ function sortRelays(
       return shuffleRelays(next);
     case "hostname":
       next.sort((a, b) => a.hostname.localeCompare(b.hostname));
+      return next;
+    default:
       return next;
   }
 }

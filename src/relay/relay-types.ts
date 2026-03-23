@@ -16,17 +16,17 @@ export interface RelayRecord {
 }
 
 export interface RelayFilters {
-  country?: string;
-  city?: string;
-  hostname?: string;
-  provider?: string;
-  ownership?: RelayOwnership;
-  excludeCountry?: string[];
+  country?: string | undefined;
+  city?: string | undefined;
+  hostname?: string | undefined;
+  provider?: string | undefined;
+  ownership?: RelayOwnership | undefined;
+  excludeCountry?: string[] | undefined;
 }
 
 export type RelaySort = "random" | "hostname" | "country" | "city";
 
 export interface RelaySelectionConfig extends RelayFilters {
-  sort?: RelaySort;
-  unhealthyBackoffMs?: number;
+  sort?: RelaySort | undefined;
+  unhealthyBackoffMs?: number | undefined;
 }

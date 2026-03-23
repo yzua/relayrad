@@ -15,7 +15,7 @@ export interface ProxyRequestLogger {
 
 export interface ProxyRequestLoggingOptions {
   logProxyConsole: boolean;
-  logProxySqlitePath?: string;
+  logProxySqlitePath?: string | undefined;
 }
 
 interface StatementLike {

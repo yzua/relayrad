@@ -17,14 +17,14 @@ export function selectionConfigFromUrl(url: URL): RelaySelectionConfig {
 export function sanitizeSelectionConfig(input: unknown): RelaySelectionConfig {
   const value = isRecord(input) ? input : {};
   return {
-    country: stringField(value.country),
-    city: stringField(value.city),
-    hostname: stringField(value.hostname),
-    provider: stringField(value.provider),
-    ownership: ownershipField(value.ownership),
-    excludeCountry: stringListField(value.exclude_country),
-    sort: sortField(value.sort),
-    unhealthyBackoffMs: numberField(value.unhealthyBackoffMs),
+    country: stringField(value["country"]),
+    city: stringField(value["city"]),
+    hostname: stringField(value["hostname"]),
+    provider: stringField(value["provider"]),
+    ownership: ownershipField(value["ownership"]),
+    excludeCountry: stringListField(value["exclude_country"]),
+    sort: sortField(value["sort"]),
+    unhealthyBackoffMs: numberField(value["unhealthyBackoffMs"]),
   };
 }
 

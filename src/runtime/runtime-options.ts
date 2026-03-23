@@ -2,9 +2,9 @@ export interface RuntimeOptions {
   host: string;
   port: number;
   logProxyConsole: boolean;
-  logProxySqlitePath?: string;
-  socks5Port?: number;
-  proxyAuth?: { username: string; password: string };
+  logProxySqlitePath?: string | undefined;
+  socks5Port?: number | undefined;
+  proxyAuth?: { username: string; password: string } | undefined;
 }
 
 interface ParseRuntimeOptionsInput {
@@ -16,8 +16,8 @@ export function parseRuntimeOptions({
   argv,
   env,
 }: ParseRuntimeOptionsInput): RuntimeOptions {
-  const host = env.RELAYRAD_HOST?.trim() || "127.0.0.1";
-  const envPort = parsePort(env.RELAYRAD_PORT);
+  const host = env["RELAYRAD_HOST"]?.trim() || "127.0.0.1";
+  const envPort = parsePort(env["RELAYRAD_PORT"]);
   const flagPort = parsePortFlag(argv);
   const logProxyConsole = parseLogProxyConsole(argv);
   const logProxySqlitePath = parseLogProxySqlitePath(argv);

@@ -10,7 +10,10 @@ import {
   handleHttpProxyRequest,
   type ProxyRuntime,
 } from "../proxy/http-proxy";
-import { createRelaySelector } from "../relay/relay-selector";
+import {
+  createRelaySelector,
+  type ResolvedRelaySelectionConfig,
+} from "../relay/relay-selector";
 import type { RelayRecord, RelaySelectionConfig } from "../relay/relay-types";
 import type { StatsTracker } from "../stats";
 import { defaultSelectionConfig } from "./config";
@@ -26,7 +29,7 @@ export interface ProxyServerDeps {
   refreshRelays: () => Promise<RelayRecord[]>;
   requestLogger: ProxyRequestLogger;
   statsTracker: StatsTracker;
-  proxyAuth?: { username: string; password: string };
+  proxyAuth?: { username: string; password: string } | undefined;
 }
 
 export interface ProxyServer {
@@ -153,9 +156,7 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
 
 interface RouteDeps {
   listRelays: (filters: RelaySelectionConfig) => RelayRecord[];
-  updateConfig: (
-    config: RelaySelectionConfig,
-  ) => Required<RelaySelectionConfig>;
+  updateConfig: (config: RelaySelectionConfig) => ResolvedRelaySelectionConfig;
   refresh: () => Promise<RelayRecord[]>;
   statsTracker: StatsTracker;
 }

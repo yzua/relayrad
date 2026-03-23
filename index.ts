@@ -29,9 +29,9 @@ const requestLogger = createProxyRequestLogger({
 const statsTracker = createStatsTracker();
 
 async function loadRelays(): Promise<RelayRecord[]> {
-  const relayListFile = process.env.RELAYRAD_RELAY_LIST_FILE;
-  const socksHostOverride = process.env.RELAYRAD_SOCKS_HOST_OVERRIDE;
-  const socksPortOverride = process.env.RELAYRAD_SOCKS_PORT_OVERRIDE;
+  const relayListFile = process.env["RELAYRAD_RELAY_LIST_FILE"];
+  const socksHostOverride = process.env["RELAYRAD_SOCKS_HOST_OVERRIDE"];
+  const socksPortOverride = process.env["RELAYRAD_SOCKS_PORT_OVERRIDE"];
 
   const relays = relayListFile
     ? parseRelayList(await Bun.file(relayListFile).text())

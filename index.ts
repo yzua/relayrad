@@ -33,9 +33,21 @@ async function loadRelays(): Promise<RelayRecord[]> {
   const socksHostOverride = process.env["RELAYRAD_SOCKS_HOST_OVERRIDE"];
   const socksPortOverride = process.env["RELAYRAD_SOCKS_PORT_OVERRIDE"];
 
-  const relays = relayListFile
-    ? parseRelayList(await Bun.file(relayListFile).text())
-    : await loadRelaysFromMullvadCli();
+  let relays: RelayRecord[];
+
+  if (relayListFile) {
+    const file = Bun.file(relayListFile);
+    if (!(await file.exists())) {
+      throw new Error(`file not found: ${relayListFile}`);
+    }
+    const text = await file.text();
+    if (text.trim().length === 0) {
+      throw new Error(`file is empty: ${relayListFile}`);
+    }
+    relays = parseRelayList(text);
+  } else {
+    relays = await loadRelaysFromMullvadCli();
+  }
 
   return relays.map((relay) => ({
     ...relay,
@@ -46,9 +58,44 @@ async function loadRelays(): Promise<RelayRecord[]> {
   }));
 }
 
-const initialRelays = await loadRelays();
+let initialRelays: RelayRecord[];
+try {
+  initialRelays = await loadRelays();
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const source = process.env["RELAYRAD_RELAY_LIST_FILE"]
+    ? `file ${process.env["RELAYRAD_RELAY_LIST_FILE"]}`
+    : "mullvad CLI";
+
+  console.error(`relayrad: failed to load relays from ${source}`);
+  console.error(`  ${message}`);
+
+  if (!process.env["RELAYRAD_RELAY_LIST_FILE"]) {
+    console.error("");
+    console.error("To fix:");
+    console.error(
+      "  - Install Mullvad CLI: https://mullvad.net/download/vpn/linux",
+    );
+    console.error("  - Or provide a relay list file:");
+    console.error("      RELAYRAD_RELAY_LIST_FILE=relays.txt bun run start");
+    console.error(
+      "  - Relay list format: run `mullvad relay list > relays.txt` on a machine with Mullvad CLI",
+    );
+  }
+
+  process.exit(1);
+}
+
 if (initialRelays.length === 0) {
-  throw new Error("No Mullvad relays were loaded from the configured source");
+  const source = process.env["RELAYRAD_RELAY_LIST_FILE"]
+    ? `file ${process.env["RELAYRAD_RELAY_LIST_FILE"]}`
+    : "mullvad CLI output";
+
+  console.error(`relayrad: loaded 0 relays from ${source}`);
+  console.error(
+    "  The relay source is empty or contains no parseable entries.",
+  );
+  process.exit(1);
 }
 
 const server = createServer({

@@ -9,19 +9,31 @@ Local rotating HTTP proxy for Mullvad relays.
 ### Requirements
 
 - Bun
-- Mullvad CLI installed
-- Host is connected to Mullvad
-
-### Install
-
-```bash
-bun install
-```
+- A relay source (one of):
+  - **Mullvad CLI** installed (`mullvad` in PATH), or
+  - A **relay list file** (see below)
 
 ### Start
 
 ```bash
+bun install
 bun run start
+```
+
+The startup will fail with a clear message if no relay source is available.
+
+### Without Mullvad CLI
+
+If you don't have the Mullvad CLI installed, generate a relay list file on a machine that does:
+
+```bash
+mullvad relay list > relays.txt
+```
+
+Then copy `relays.txt` to your relayrad directory and start with:
+
+```bash
+RELAYRAD_RELAY_LIST_FILE=relays.txt bun run start
 ```
 
 Default endpoint: `http://127.0.0.1:4123`

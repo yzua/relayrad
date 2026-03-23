@@ -1,151 +1,195 @@
 # relayrad
 
-Local rotating HTTP proxy for Mullvad relays.
+Local rotating proxy that routes traffic through Mullvad relays, TOR, or both.
 
-`relayrad` reads relay inventory from `mullvad relay list` (or a fixture file) and exposes one stable local proxy endpoint. Each proxied request is sent through a selected relay based on your active rotation config.
+`relayrad` gives you one stable local proxy endpoint and rotates upstream relay paths behind it. It supports HTTP proxying, `CONNECT` tunnels, and an optional SOCKS5 server.
 
-## Quick Start
+## Why use it?
+
+- One local proxy endpoint: `http://127.0.0.1:4123`
+- Multiple upstream sources: Mullvad, TOR, or both
+- Interactive TUI on `bun run start`
+- Runtime rotation API: list relays, change filters, refresh sources
+- Optional SOCKS5 server, proxy auth, console logging, and SQLite logging
+
+## Supported sources
+
+| Source | Status | Notes |
+| --- | --- | --- |
+| Mullvad | Stable | Reads from `mullvad relay list` or a relay list file |
+| TOR | Stable | Uses the local TOR SOCKS5 proxy and rotates circuits per request |
+| NordVPN | Planned | Not implemented yet |
+
+## Quick start
 
 ### Requirements
 
 - Bun
-- A relay source (one of):
-  - **Mullvad CLI** installed (`mullvad` in PATH), or
-  - A **relay list file** (see below)
+- At least one upstream source:
+  - Mullvad CLI in `PATH`, or
+  - a Mullvad relay list file, or
+  - TOR running on `127.0.0.1:9050`
 
-### Start
+### Start with the TUI
 
 ```bash
 bun install
 bun run start
 ```
 
-The startup will fail with a clear message if no relay source is available.
+The TUI lets you choose:
 
-### Without Mullvad CLI
+- Mullvad and/or TOR
+- console / SQLite logging
+- HTTP port
+- optional SOCKS5 port
+- optional proxy auth
 
-If you don't have the Mullvad CLI installed, generate a relay list file on a machine that does:
+### Start directly from CLI
+
+```bash
+# Mullvad only
+bun run start -- --mullvad
+
+# TOR only
+bun run start -- --tor
+
+# Mullvad + TOR
+bun run start -- --mullvad --tor
+
+# Skip TUI explicitly
+bun run start -- --no-tui --mullvad
+```
+
+## Examples
+
+### curl
+
+```bash
+curl -x http://127.0.0.1:4123 http://httpbin.org/ip
+curl -x http://127.0.0.1:4123 http://httpbin.org/ip
+curl -x http://127.0.0.1:4123 http://httpbin.org/ip
+```
+
+### Python with `requests`
+
+```python
+import requests
+
+proxies = {
+    "http": "http://127.0.0.1:4123",
+    "https": "http://127.0.0.1:4123",
+}
+
+for _ in range(3):
+    r = requests.get("http://httpbin.org/ip", proxies=proxies, timeout=30)
+    print(r.json())
+```
+
+### SOCKS5 client mode
+
+```bash
+bun run start -- --mullvad --socks5-port 1080
+curl --socks5-hostname 127.0.0.1:1080 https://api.example.com
+```
+
+## Common setups
+
+### Mullvad only
+
+```bash
+bun run start -- --mullvad
+```
+
+### TOR only
+
+```bash
+bun run start -- --tor
+```
+
+TOR uses one local SOCKS endpoint, but `relayrad` asks TOR for fresh isolated circuits per request, so exit IPs rotate naturally.
+
+### Mullvad without Mullvad CLI
+
+Generate a relay file on a machine that has the CLI:
 
 ```bash
 mullvad relay list > relays.txt
 ```
 
-Then copy `relays.txt` to your relayrad directory and start with:
+Then run:
 
 ```bash
-RELAYRAD_RELAY_LIST_FILE=relays.txt bun run start
+RELAYRAD_RELAY_LIST_FILE=relays.txt bun run start -- --mullvad
 ```
 
-Default endpoint: `http://127.0.0.1:4123`
-
-Custom port:
+### TOR setup
 
 ```bash
-bun run start -- --port 4123
+# Debian/Ubuntu
+sudo apt install tor
+sudo systemctl start tor
+
+# macOS
+brew install tor
+brew services start tor
 ```
 
-Console proxy request logging is enabled by default.
-
-Disable console logging explicitly:
+### With SQLite logging
 
 ```bash
-bun run start -- --no-log-proxy-console
+bun run start -- --mullvad --log-proxy-sqlite ./relayrad-logs.sqlite
 ```
 
-Enable console logging (already on by default, this flag is a no-op):
+### With proxy auth
 
 ```bash
-bun run start -- --log-proxy-console
-```
-
-Enable SQLite storage only:
-
-```bash
-bun run start -- --log-proxy-sqlite ./relayrad-logs.sqlite
-```
-
-Enable both console and SQLite logging:
-
-```bash
-bun run start -- --log-proxy-console --log-proxy-sqlite ./relayrad-logs.sqlite
-```
-
-Start a SOCKS5 listener alongside the HTTP proxy:
-
-```bash
-bun run start -- --socks5-port 1080
-```
-
-Require proxy authentication:
-
-```bash
-bun run start -- --proxy-auth myuser:mypassword
-```
-
-## Basic Usage
-
-Use `relayrad` as your HTTP proxy:
-
-```bash
-curl -x http://127.0.0.1:4123 http://httpbin.org/ip
-curl -x http://127.0.0.1:4123 http://httpbin.org/ip
-curl -x http://127.0.0.1:4123 http://httpbin.org/ip
-```
-
-Use via SOCKS5 (when `--socks5-port` is set):
-
-```bash
-curl --socks5 127.0.0.1:1080 http://httpbin.org/ip
-curl --socks5-hostname 127.0.0.1:1080 https://api.example.com
-```
-
-With authentication:
-
-```bash
-curl -x http://127.0.0.1:4123 --proxy-user myuser:mypassword http://httpbin.org/ip
+bun run start -- --mullvad --proxy-auth admin:secret123
+curl -x http://127.0.0.1:4123 --proxy-user admin:secret123 http://httpbin.org/ip
 ```
 
 ## API
 
-### List Relays
+### `GET /relays`
+
+List currently available relay endpoints.
 
 ```bash
-curl 'http://127.0.0.1:4123/relays?country=usa&sort=random'
-```
-
-Exclude specific countries:
-
-```bash
+curl 'http://127.0.0.1:4123/relays?sort=random'
 curl 'http://127.0.0.1:4123/relays?exclude_country=us,de&sort=random'
 ```
 
-### Update Rotation Config
+### `POST /rotate`
+
+Update the active rotation config at runtime.
 
 ```bash
 curl -X POST http://127.0.0.1:4123/rotate \
   -H 'content-type: application/json' \
-  -d '{"country":"usa","sort":"random","unhealthyBackoffMs":45000}'
+  -d '{"country":"se","sort":"random","unhealthyBackoffMs":45000}'
 ```
 
-### Refresh Relay Inventory
+### `POST /relays/refresh`
+
+Reload upstream relay sources.
 
 ```bash
 curl -X POST http://127.0.0.1:4123/relays/refresh
 ```
 
-### Health Check
+### `GET /health`
 
 ```bash
 curl http://127.0.0.1:4123/health
 ```
 
-### Stats
+### `GET /stats`
 
 ```bash
 curl http://127.0.0.1:4123/stats
 ```
 
-Returns:
+Example response:
 
 ```json
 {
@@ -154,31 +198,24 @@ Returns:
   "activeConnections": 5,
   "startTime": "2026-03-22T20:00:00.000Z",
   "topRelays": [
-    { "hostname": "us-chi-wg-303", "requests": 230, "failures": 2 }
+    { "hostname": "us-chi-wg-303", "requests": 230, "failures": 2 },
+    { "hostname": "tor-relay", "requests": 180, "failures": 1 }
   ]
 }
 ```
 
-## Rotation Behavior
+## Selection config
 
-- Default config:
-  - `sort: "random"`
-  - `unhealthyBackoffMs: 30000`
-- If a relay fails during proxying, it is marked unhealthy and temporarily skipped.
-- `POST /rotate` changes the active config at runtime (no restart required).
-
-## Selection Config Reference
-
-Use these fields in query params (`GET /relays`) or JSON body (`POST /rotate`).
+Use these fields in query params for `GET /relays` or JSON bodies for `POST /rotate`.
 
 | Field | Type | Behavior |
 | --- | --- | --- |
-| `country` | `string` | Match by country code or country name (case-insensitive) |
-| `city` | `string` | Match by city code or city name (case-insensitive) |
+| `country` | `string` | Match by country code or country name |
+| `city` | `string` | Match by city code or city name |
 | `hostname` | `string` | Substring match on relay hostname |
-| `provider` | `string` | Exact provider match (case-insensitive) |
+| `provider` | `string` | Exact provider match |
 | `ownership` | `owned \| rented` | Filter by ownership type |
-| `exclude_country` | `string` | Comma-separated country codes/names to exclude (e.g. `us,de,fr`) |
+| `exclude_country` | `string` | Comma-separated country codes/names to exclude |
 | `sort` | `random \| hostname \| country \| city` | Result ordering |
 | `unhealthyBackoffMs` | `number` | Skip duration after relay failure |
 
@@ -189,90 +226,91 @@ Sort behavior:
 - `country`: lexical by country, then city, then hostname
 - `city`: lexical by city, then hostname
 
-## HTTP API
+## CLI flags
 
-| Endpoint | Method | Purpose |
+| Flag | Default | Description |
 | --- | --- | --- |
-| `/relays` | `GET` | List relays using optional filters/sort |
-| `/rotate` | `POST` | Update active rotation config and return preview |
-| `/relays/refresh` | `POST` | Reload relay inventory from configured source |
-| `/health` | `GET` | Liveness check (`{ "ok": true }`) |
-| `/stats` | `GET` | Request stats, per-relay counts, active connections |
+| `--mullvad` | auto | Enable Mullvad as a source |
+| `--tor` | off | Enable TOR as a source |
+| `--tor-port <port>` | `9050` | TOR SOCKS5 port |
+| `--port`, `-p` | `4123` | HTTP proxy port |
+| `--socks5-port <port>` | off | Start SOCKS5 listener |
+| `--proxy-auth user:pass` | off | Require proxy auth |
+| `--log-proxy-sqlite <path>` | off | Write proxy logs to SQLite |
+| `--no-log-proxy-console` | off | Disable console logging |
+| `--no-tui` | off | Skip interactive startup |
 
-## SOCKS5 Server Mode
+When no source flags are passed and `--no-tui` is not set, the TUI starts automatically in a TTY.
 
-When `--socks5-port` is set, relayrad starts a second listener that speaks the SOCKS5 protocol directly. This lets tools that natively support SOCKS5 (curl, browsers, proxychains) connect without the HTTP CONNECT wrapper.
-
-```bash
-bun run start -- --socks5-port 1080
-# logs: relayrad SOCKS5 listening on socks5://127.0.0.1:1080
-```
-
-The SOCKS5 server uses its own relay selector (independent from the HTTP proxy). Requests are logged and tracked in stats identically.
-
-## Proxy Authentication
-
-When `--proxy-auth user:pass` is set, all proxy requests (both HTTP and CONNECT) require a `Proxy-Authorization: Basic ...` header. API endpoints (`/relays`, `/health`, `/stats`, etc.) are not affected.
-
-```bash
-# Start with auth
-bun run start -- --proxy-auth admin:secret123
-
-# Requests without auth get 407
-curl -x http://127.0.0.1:4123 http://example.com
-# => 407 Proxy Authentication Required
-
-# Requests with auth work
-curl -x http://127.0.0.1:4123 --proxy-user admin:secret123 http://example.com
-```
-
-Auth is **off by default**. Without `--proxy-auth`, all proxy requests are accepted without credentials.
-
-## Error Handling
-
-- Invalid JSON in `POST /rotate` -> `400`
-- Invalid non-proxy request URL -> `400`
-- Upstream proxy failure -> `502`
-- Missing/invalid proxy auth (when enabled) -> `407`
-- Relay load/refresh failure (missing CLI, non-zero exit, malformed output) -> explicit error message
-
-## Environment Variables
+## Environment variables
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `RELAYRAD_HOST` | `127.0.0.1` | Bind host |
 | `RELAYRAD_PORT` | `4123` | Bind port |
-| `RELAYRAD_RELAY_LIST_FILE` | _unset_ | Read relay list from file instead of `mullvad relay list` |
-| `RELAYRAD_SOCKS_HOST_OVERRIDE` | _unset_ | Override SOCKS hostname for all loaded relays |
-| `RELAYRAD_SOCKS_PORT_OVERRIDE` | _unset_ | Override SOCKS port for all loaded relays |
+| `RELAYRAD_RELAY_LIST_FILE` | unset | Mullvad relay list file |
+| `RELAYRAD_SOCKS_HOST_OVERRIDE` | unset | Override Mullvad SOCKS host |
+| `RELAYRAD_SOCKS_PORT_OVERRIDE` | unset | Override Mullvad SOCKS port |
 
-## CLI Flags
+## Rotation notes
 
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--port`, `-p` | `4123` | HTTP proxy listen port |
-| `--socks5-port` | _disabled_ | SOCKS5 listener port (enables SOCKS5 server) |
-| `--proxy-auth user:pass` | _disabled_ | Require Basic auth for proxy requests |
-| `--log-proxy-console` | enabled | Print one line per proxied request/CONNECT tunnel |
-| `--no-log-proxy-console` | disabled | Disable default console proxy logging |
-| `--log-proxy-sqlite <path>` | disabled | Log proxied requests to SQLite file |
+- Default sort is `random`
+- Failed relays are marked unhealthy and skipped for `30000ms`
+- `POST /rotate` changes selection behavior without restarting
+- Mullvad contributes many relay endpoints
+- TOR contributes one local endpoint that produces rotating circuits per request
 
-## Proxy Logging
+## SOCKS5 server mode
 
-Only successful final relay usage is logged. Failed relay attempts are not stored. No request headers, client IPs, bodies, or full URLs are stored by this feature.
-
-Stored fields in SQLite:
-
-- `timestamp`
-- `request_type` (`http` or `connect`)
-- `destination_host`
-- `destination_port`
-- `relay_hostname`
-
-## Dev Validation
+When `--socks5-port` is set, `relayrad` starts a local SOCKS5 server in addition to the HTTP proxy.
 
 ```bash
+bun run start -- --mullvad --socks5-port 1080
+curl --socks5-hostname 127.0.0.1:1080 https://api.example.com
+```
+
+## Proxy auth
+
+When `--proxy-auth user:pass` is set, proxy requests require `Proxy-Authorization: Basic ...`.
+API endpoints like `/relays`, `/health`, and `/stats` stay unauthenticated.
+
+## Error handling
+
+- Invalid JSON in `POST /rotate` -> `400`
+- Invalid non-proxy request URL -> `400`
+- Upstream proxy failure -> `502`
+- Missing or invalid proxy auth -> `407`
+- Relay load or refresh failure -> explicit startup/runtime error message
+- TOR not running when selected -> clear error with instructions
+
+## TUI behavior
+
+The interactive setup asks for:
+
+- relay sources
+- console / SQLite logging
+- HTTP port
+- optional SOCKS5 port
+- optional proxy auth
+
+The TUI is skipped automatically when:
+
+- `--no-tui` is passed
+- a source flag like `--mullvad` or `--tor` is passed
+- config flags like `--port`, `--socks5-port`, `--proxy-auth`, or `--log-proxy-sqlite` are passed
+- not running in a TTY
+
+## Development
+
+```bash
+bun install
 bun run biome-lint
 bunx tsc --noEmit
 bun test
 ```
+
+## Roadmap
+
+- Better startup/status messaging for TOR circuit mode
+- More relay sources such as NordVPN
+- More TUI options and presets

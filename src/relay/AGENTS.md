@@ -3,7 +3,7 @@
 **Scope:** `src/relay/` parsing, contracts, selection strategy.
 
 ## OVERVIEW
-`src/relay` turns Mullvad CLI output into typed relay records and applies filtering/sorting/rotation with unhealthy backoff and country exclusion.
+`src/relay` aggregates relay nodes from multiple sources (Mullvad CLI text, TOR) into typed relay records and applies filtering/sorting/rotation with unhealthy backoff and country exclusion.
 
 ## OVERRIDES ROOT
 - Source-of-truth input is CLI text (`mullvad relay list`), not JSON.
@@ -15,7 +15,8 @@
 | Parse CLI output | `src/relay/relay-parser.ts` | Regex line-state parser for country/city/relay rows |
 | Relay selection logic | `src/relay/relay-selector.ts` | Filters, sort modes, round-robin/random cycle, unhealthy backoff |
 | CLI process adapter | `src/relay/mullvad-cli.ts` | `Bun.spawn` wrapper + explicit failure messages |
-| Shared relay contracts | `src/relay/relay-types.ts` | `RelayRecord`, filters, sort, selection config |
+| TOR relay source | `src/relay/tor-relay.ts` | `createTorRelay()`, `checkTorAvailable()` TCP probe to SOCKS5 port |
+| Shared relay contracts | `src/relay/relay-types.ts` | `RelayRecord`, `RelaySource`, filters, sort, selection config |
 
 ## LOCAL INVARIANTS
 - Parser ignores malformed/incomplete rows; only fully populated relay entries are emitted.
@@ -23,6 +24,8 @@
 - Internal `normalizeConfig` fallback: `sort: hostname`, `unhealthyBackoffMs: 30000`. Server overrides to `sort: random`.
 - `excludeCountry` matches against both `countryCode` and `countryName` (case-insensitive).
 - `next()` must return deterministic round-robin for non-random sorts and cycle-based random ordering for `sort=random`.
+- TOR relay is a single synthetic record (`source: "tor"`, `hostname: "tor-relay"`). TOR handles its own circuit rotation internally.
+- Adding a new relay source: create `src/relay/<source>.ts`, add `RelaySource` variant to `relay-types.ts`, wire in `index.ts`.
 
 ## ANTI-PATTERNS
 - Do not replace regex parser with JSON assumptions.
@@ -33,6 +36,7 @@
 ## VALIDATION
 - Run: `bun test test/relay-parser.test.ts`
 - Run: `bun test test/relay-selector.test.ts`
+- Run: `bun test test/tor-relay.test.ts`
 - For CLI adapter changes, run full suite: `bun test`
 
 ## RELATED PATHS

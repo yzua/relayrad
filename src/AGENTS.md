@@ -8,6 +8,7 @@
 ## STRUCTURE
 ```text
 src/
+|- tui/                    # Interactive TUI for source/options selection
 |- server/                # HTTP route handling + runtime state wiring
 |- proxy/                 # upstream transport, SOCKS5 connect, SOCKS5 server
 |  `- AGENTS.md
@@ -26,6 +27,8 @@ src/
 | Change relay parsing/selection | `src/relay/AGENTS.md` | Child doc covers parser/selector invariants |
 | Change runtime flags/env behavior | `src/runtime/runtime-options.ts` | Preserve `--port` / `-p` precedence over env |
 | Change logging behavior | `src/logging/proxy-request-logger.ts` | Console + SQLite backends, composite logger |
+| Change TUI prompts/flow | `src/tui/tui.ts` | @inquirer/prompts, TUI detection logic |
+| Add new relay source | `src/relay/<source>.ts` | Follow `tor-relay.ts` pattern, add `RelaySource` variant |
 
 ## CONVENTIONS
 - Keep side effects at boundaries (`src/server/server.ts`, `src/relay/mullvad-cli.ts`); keep selector/parser/options modules mostly pure.

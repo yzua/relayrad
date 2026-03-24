@@ -6,6 +6,7 @@ export interface ProxyRequestLogEvent {
   destinationHost: string;
   destinationPort: number;
   relayHostname: string;
+  relaySource: string;
 }
 
 export interface ProxyRequestLogger {
@@ -92,7 +93,8 @@ function createSqliteProxyRequestLogger(path: string): ProxyRequestLogger {
       request_type TEXT NOT NULL,
       destination_host TEXT NOT NULL,
       destination_port INTEGER NOT NULL,
-      relay_hostname TEXT NOT NULL
+      relay_hostname TEXT NOT NULL,
+      relay_source TEXT NOT NULL
     )`,
   );
   database.exec(
@@ -108,8 +110,9 @@ function createSqliteProxyRequestLogger(path: string): ProxyRequestLogger {
       request_type,
       destination_host,
       destination_port,
-      relay_hostname
-    ) VALUES (?, ?, ?, ?, ?)`,
+      relay_hostname,
+      relay_source
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
   );
 
   return createSqliteProxyRequestLoggerFromStatement(insertStatement, database);
@@ -128,6 +131,7 @@ export function createSqliteProxyRequestLoggerFromStatement(
           event.destinationHost,
           event.destinationPort,
           event.relayHostname,
+          event.relaySource,
         );
       } catch (error) {
         warnLoggerFailure("sqlite", error);
@@ -140,7 +144,7 @@ export function createSqliteProxyRequestLoggerFromStatement(
 }
 
 function formatConsoleLogLine(event: ProxyRequestLogEvent): string {
-  return `[proxy-log] ${event.timestamp} type=${event.requestType} dest=${event.destinationHost}:${event.destinationPort} relay=${event.relayHostname}`;
+  return `[proxy-log] ${event.timestamp} type=${event.requestType} source=${event.relaySource} dest=${event.destinationHost}:${event.destinationPort} relay=${event.relayHostname}`;
 }
 
 function warnLoggerFailure(target: string, error: unknown): void {

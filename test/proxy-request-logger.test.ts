@@ -12,6 +12,7 @@ const sampleEvent: ProxyRequestLogEvent = {
   destinationHost: "example.com",
   destinationPort: 80,
   relayHostname: "us-nyc-wg-101",
+  relaySource: "mullvad",
 };
 
 describe("proxy request logger", () => {

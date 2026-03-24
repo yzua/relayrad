@@ -1,5 +1,6 @@
 import { createServer as createTcpServer, type Socket } from "node:net";
 import type { ProxyRuntime } from "./http-proxy";
+import { connectViaHttpProxy } from "./http-upstream";
 import { type RelayRetryDeps, tryRelays } from "./relay-retry";
 import { connectViaSocks5 } from "./socks5";
 
@@ -97,11 +98,10 @@ async function handleClient(
   };
 
   const lastError = await tryRelays(retryDeps, async (relay) => {
-    const upstreamSocket = await connectViaSocks5(
-      relay,
-      targetHost,
-      targetPort,
-    );
+    const upstreamSocket =
+      relay.protocol === "http"
+        ? await connectViaHttpProxy(relay, targetHost, targetPort)
+        : await connectViaSocks5(relay, targetHost, targetPort);
 
     runtime.requestLogger.log({
       timestamp: new Date().toISOString(),
@@ -109,6 +109,7 @@ async function handleClient(
       destinationHost: targetHost,
       destinationPort: targetPort,
       relayHostname: relay.hostname,
+      relaySource: relay.source,
     });
 
     clientSocket.write(

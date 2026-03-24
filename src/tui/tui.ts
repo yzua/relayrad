@@ -1,5 +1,5 @@
 import { checkbox, confirm, input } from "@inquirer/prompts";
-import { checkTorAvailable } from "../relay/tor-relay";
+import { checkTorAvailable } from "../relay/tor/tor-relay";
 import {
   parsePortValue,
   parseProxyAuthValue,
@@ -24,15 +24,14 @@ export async function runTui(): Promise<TuiConfig> {
   const torAvailable = await checkTorAvailable();
 
   const sourceChoices = [
-    { name: "Mullvad VPN", value: "mullvad", checked: true },
+    { name: "Mullvad", value: "mullvad", checked: true },
     {
-      name: torAvailable
-        ? "TOR (localhost:9050)"
-        : "TOR (not running on localhost:9050)",
+      name: torAvailable ? "TOR" : "TOR (not running — install tor first)",
       value: "tor",
       checked: false,
       disabled: torAvailable ? false : "TOR not detected",
     },
+    { name: "NordVPN", value: "nordvpn", checked: false },
   ];
 
   const sources = await checkbox({
@@ -115,7 +114,7 @@ export function shouldShowTui(argv: string[]): boolean {
     return false;
   }
 
-  const sourceFlags = ["--mullvad", "--tor"];
+  const sourceFlags = ["--mullvad", "--tor", "--nordvpn"];
   if (sourceFlags.some((flag) => argv.includes(flag))) {
     return false;
   }

@@ -32,6 +32,7 @@ const startupConfig = resolveStartupConfig(rawOptions, {
   proxyAuth: tuiConfig?.proxyAuth,
   useMullvad: tuiConfig?.sources.includes("mullvad"),
   useTor: tuiConfig?.sources.includes("tor"),
+  useNordvpn: tuiConfig?.sources.includes("nordvpn"),
 });
 
 const requestLogger = createProxyRequestLogger({

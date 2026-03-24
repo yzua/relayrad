@@ -9,6 +9,7 @@ export interface RuntimeOptions {
   proxyAuth?: { username: string; password: string } | undefined;
   useMullvad: boolean;
   useTor: boolean;
+  useNordvpn: boolean;
   torPort: number;
   noTui: boolean;
 }
@@ -38,6 +39,7 @@ export function parseRuntimeOptions({
     proxyAuth: parseProxyAuth(argv),
     useMullvad: parseFlag(argv, "--mullvad"),
     useTor: parseFlag(argv, "--tor"),
+    useNordvpn: parseFlag(argv, "--nordvpn"),
     torPort,
     noTui: parseFlag(argv, "--no-tui"),
   };

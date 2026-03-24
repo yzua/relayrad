@@ -1,5 +1,5 @@
 import { connect as connectTcp } from "node:net";
-import type { RelayRecord } from "./relay-types";
+import type { RelayRecord } from "../relay-types";
 
 const TOR_DEFAULT_HOST = "127.0.0.1";
 const TOR_DEFAULT_PORT = 9050;

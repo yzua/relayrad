@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkTorAvailable, createTorRelay } from "../src/relay/tor-relay";
+import { checkTorAvailable, createTorRelay } from "../src/relay/tor/tor-relay";
 
 describe("createTorRelay", () => {
   test("returns a relay record with tor source and default port", () => {

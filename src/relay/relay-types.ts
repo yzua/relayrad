@@ -1,5 +1,5 @@
 export type RelayOwnership = "owned" | "rented";
-export type RelaySource = "mullvad" | "tor";
+export type RelaySource = "mullvad" | "tor" | "nordvpn";
 
 export interface RelayRecord {
   source: RelaySource;

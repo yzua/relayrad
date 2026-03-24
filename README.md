@@ -13,7 +13,7 @@ curl -x http://127.0.0.1:4123 http://httpbin.org/ip   # TOR circuit
 | Source | Relays | Auth | Install needed |
 | --- | --- | --- | --- |
 | Mullvad | ~580 | None | No |
-| NordVPN | ~9000 | Service credentials | No |
+| NordVPN | 12 SOCKS5 endpoints | Service credentials | No (requires VPN connection) |
 | TOR | 1 endpoint (routes through entire TOR network) | None | Yes (local tor) |
 
 ## Quick start
@@ -24,8 +24,10 @@ bun run start           # interactive TUI
 bun run start -- --mullvad --nordvpn   # skip TUI
 ```
 
-**NordVPN** needs service credentials. Get them at:
+**NordVPN** requires an active NordVPN VPN connection on the host. SOCKS5 credentials are needed. Get them at:
 `https://my.nordaccount.com/dashboard/nordvpn/manual-configuration/service-credentials/`
+
+> **Note:** NordVPN currently requires the host to be connected to the VPN for proxy access. We are working on a solution to enable all NordVPN servers standalone without a VPN connection.
 
 ```bash
 cp .env.example .env
@@ -136,7 +138,7 @@ TOR relay has `provider: "tor-project"`, `ownership: "owned"`.
 - Failed relays are marked unhealthy and skipped for 30s
 - `POST /rotate` changes behavior without restart
 - Mullvad: SOCKS5 per server, no auth, public endpoints
-- NordVPN: HTTPS proxy on port 89, requires service credentials
+- NordVPN: SOCKS5 on `*.socks.nordhold.net:1080`, requires VPN connection + service credentials
 - TOR: one local SOCKS5 endpoint (localhost:9050), but TOR internally routes through thousands of relays and rotates circuits per request
 
 ## Development

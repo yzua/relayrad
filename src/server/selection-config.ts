@@ -1,6 +1,19 @@
 import type { IncomingMessage } from "node:http";
 import type { RelaySelectionConfig } from "../relay/relay-types";
 
+const MAX_REQUEST_BODY_BYTES = 1024 * 64;
+
+const KNOWN_ROTATE_FIELDS = new Set([
+  "country",
+  "city",
+  "hostname",
+  "provider",
+  "ownership",
+  "exclude_country",
+  "sort",
+  "unhealthyBackoffMs",
+]);
+
 export class InvalidJsonBodyError extends Error {
   constructor(message = "Request body must be valid JSON") {
     super(message);
@@ -28,10 +41,26 @@ export function sanitizeSelectionConfig(input: unknown): RelaySelectionConfig {
   };
 }
 
+export function unknownFields(input: unknown): string[] {
+  if (!isRecord(input)) return [];
+  return Object.keys(input).filter((key) => !KNOWN_ROTATE_FIELDS.has(key));
+}
+
 export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
   for await (const chunk of req) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    totalBytes += buf.length;
+
+    if (totalBytes > MAX_REQUEST_BODY_BYTES) {
+      throw new InvalidJsonBodyError(
+        `Request body exceeds ${MAX_REQUEST_BODY_BYTES} byte limit`,
+      );
+    }
+
+    chunks.push(buf);
   }
 
   if (chunks.length === 0) {
@@ -61,26 +90,30 @@ function stringListField(value: unknown): string[] | undefined {
 }
 
 function numberField(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
     return value;
   }
   if (typeof value === "string" && value.trim()) {
     const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : undefined;
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
   }
   return undefined;
 }
 
 function ownershipField(value: unknown): RelaySelectionConfig["ownership"] {
-  return value === "owned" || value === "rented" ? value : undefined;
+  if (typeof value !== "string") return undefined;
+  const lower = value.trim().toLowerCase();
+  return lower === "owned" || lower === "rented" ? lower : undefined;
 }
 
 function sortField(value: unknown): RelaySelectionConfig["sort"] {
-  return value === "country" ||
-    value === "city" ||
-    value === "hostname" ||
-    value === "random"
-    ? value
+  if (typeof value !== "string") return undefined;
+  const lower = value.trim().toLowerCase();
+  return lower === "country" ||
+    lower === "city" ||
+    lower === "hostname" ||
+    lower === "random"
+    ? lower
     : undefined;
 }
 

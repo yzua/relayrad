@@ -22,6 +22,7 @@ import {
   readJsonBody,
   sanitizeSelectionConfig,
   selectionConfigFromUrl,
+  unknownFields,
 } from "./selection-config";
 
 export interface ProxyServerDeps {
@@ -193,11 +194,18 @@ async function routeRequest(
 
   if (req.method === "POST" && url.pathname === "/rotate") {
     const body = await readJsonBody(req);
+    const warnings = unknownFields(body);
     const config = deps.updateConfig(sanitizeSelectionConfig(body));
-    sendJson(res, 200, {
+    const response: Record<string, unknown> = {
       config,
       preview: deps.listRelays(config).slice(0, 10),
-    });
+    };
+    if (warnings.length > 0) {
+      response["warnings"] = warnings.map(
+        (field) => `Unknown field "${field}" ignored`,
+      );
+    }
+    sendJson(res, 200, response);
     return;
   }
 

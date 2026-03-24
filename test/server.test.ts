@@ -16,6 +16,7 @@ interface RotateResponse {
     country?: string;
   };
   preview: RelayRecord[];
+  warnings?: string[];
 }
 
 interface RefreshResponse {
@@ -94,6 +95,34 @@ describe("createServer", () => {
 
     expect(response.status).toBe(400);
     expect(payload.error).toBe("Request body must be valid JSON");
+  });
+
+  test("warns about unknown fields in /rotate body", async () => {
+    const response = await fetch(`${baseUrl}/rotate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sort: "hostname", badField: true, alsoBad: 1 }),
+    });
+
+    const payload = (await response.json()) as {
+      warnings?: string[];
+    };
+
+    expect(response.status).toBe(200);
+    expect(payload.warnings).toEqual([
+      'Unknown field "badField" ignored',
+      'Unknown field "alsoBad" ignored',
+    ]);
+  });
+
+  test("accepts case-insensitive sort values", async () => {
+    const response = await fetch(`${baseUrl}/rotate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sort: "Random", ownership: "Rented" }),
+    });
+
+    expect(response.status).toBe(200);
   });
 
   test("refreshes relay inventory through the cli adapter", async () => {

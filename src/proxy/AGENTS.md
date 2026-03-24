@@ -3,7 +3,7 @@
 **Scope:** `src/proxy/` transport layer only.
 
 ## OVERVIEW
-`src/proxy` handles forwarding of absolute HTTP proxy requests, CONNECT tunnels, and SOCKS5 server connections over selected SOCKS5 relays.
+`src/proxy` handles forwarding of absolute HTTP proxy requests, CONNECT tunnels, and SOCKS5 server connections over selected relays (SOCKS5 or HTTP upstream depending on relay protocol).
 
 ## OVERRIDES ROOT
 - Transport error semantics here are strict: upstream failure paths should resolve to deterministic `502` behavior.
@@ -14,14 +14,17 @@
 |------|------|-------|
 | HTTP proxy forwarding | `src/proxy/http-proxy.ts` | Absolute `http://` URL validation, request rewrite, relay retry |
 | CONNECT tunnel behavior | `src/proxy/http-proxy.ts` | CONNECT authority parse + bidirectional socket piping |
+| HTTP proxy upstream (TLS) | `src/proxy/http-upstream.ts` | CONNECT via TLS, HTTP request formatting, proxy auth header |
+| Shared socket utilities | `src/proxy/socket-utils.ts` | `readUntilHeaderEnd`, `waitForSocketDrain`, `onceSocketClosed` |
 | SOCKS5 client handshake | `src/proxy/socks5.ts` | Greeting, connect request framing, status validation, prewarm cache |
-| SOCKS5 server listener | `src/proxy/socks5-server.ts` | Accepts SOCKS5 clients, routes through relays via `connectViaSocks5` |
+| SOCKS5 server listener | `src/proxy/socks5-server.ts` | Accepts SOCKS5 clients, routes through relays (protocol-aware) |
 
 ## LOCAL INVARIANTS
 - `handleHttpProxyRequest` must reject non-absolute/non-HTTP proxy URLs with `400` JSON.
 - `tryRelays` must mark failed relays unhealthy before moving to the next candidate.
-- Header read limits/timeouts (`MAX_UPSTREAM_HEADER_BYTES`, `UPSTREAM_HEADER_READ_TIMEOUT_MS`) are safety guards, not optional behavior.
+- Header read limits/timeouts (in `socket-utils.ts`) are safety guards, not optional behavior.
 - CONNECT authority parsing must validate host + integer port in `1..65535`.
+- Dual upstream transport: `protocol: "socks5"` relays use `connectViaSocks5`, `protocol: "http"` relays use `connectViaHttpProxy` with TLS.
 
 ## ANTI-PATTERNS
 - Do not bypass `tryRelays` for new upstream request paths.

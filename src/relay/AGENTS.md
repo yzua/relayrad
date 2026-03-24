@@ -3,42 +3,40 @@
 **Scope:** `src/relay/` parsing, contracts, selection strategy.
 
 ## OVERVIEW
-`src/relay` aggregates relay nodes from multiple sources (Mullvad CLI text, TOR) into typed relay records and applies filtering/sorting/rotation with unhealthy backoff and country exclusion.
+`src/relay` aggregates relay nodes from multiple sources (Mullvad API, NordVPN API, TOR) into typed relay records and applies filtering/sorting/rotation with unhealthy backoff and country exclusion.
 
 ## OVERRIDES ROOT
-- Source-of-truth input is CLI text (`mullvad relay list`), not JSON.
+- All relay sources use JSON API payloads, not CLI text parsing.
 - Selection behavior is stateful (cursor/random cycle/unhealthy map), so ordering changes can affect runtime rotation guarantees.
 
 ## KEY FILES
 | Task | File | Notes |
 |------|------|-------|
-| Parse CLI output | `src/relay/relay-parser.ts` | Regex line-state parser for country/city/relay rows |
 | Relay selection logic | `src/relay/relay-selector.ts` | Filters, sort modes, round-robin/random cycle, unhealthy backoff |
-| CLI process adapter | `src/relay/mullvad-cli.ts` | `Bun.spawn` wrapper + explicit failure messages |
-| TOR relay source | `src/relay/tor-relay.ts` | `createTorRelay()`, `checkTorAvailable()` TCP probe to SOCKS5 port |
+| Mullvad API loader | `src/relay/mullvad/mullvad-api.ts` | Fetches from `api.mullvad.net`, maps to `RelayRecord` |
+| NordVPN API loader | `src/relay/nordvpn/nordvpn.ts` | Fetches from `api.nordvpn.com`, HTTP proxy on port 89 |
+| TOR relay source | `src/relay/tor/tor-relay.ts` | `createTorRelay()`, `checkTorAvailable()` TCP probe to SOCKS5 port |
 | Shared relay contracts | `src/relay/relay-types.ts` | `RelayRecord`, `RelaySource`, filters, sort, selection config |
 
 ## LOCAL INVARIANTS
-- Parser ignores malformed/incomplete rows; only fully populated relay entries are emitted.
-- `socks5Hostname` is derived from relay hostname transformation (`-wg-` -> `-wg-socks5-`) plus Mullvad domain suffix.
 - Internal `normalizeConfig` fallback: `sort: hostname`, `unhealthyBackoffMs: 30000`. Server overrides to `sort: random`.
 - `excludeCountry` matches against both `countryCode` and `countryName` (case-insensitive).
 - `next()` must return deterministic round-robin for non-random sorts and cycle-based random ordering for `sort=random`.
 - TOR relay is a single synthetic record (`source: "tor"`, `hostname: "tor-relay"`). TOR handles its own circuit rotation internally.
-- Adding a new relay source: create `src/relay/<source>.ts`, add `RelaySource` variant to `relay-types.ts`, wire in `index.ts`.
+- Relay protocol distinguishes transport: `protocol: "socks5"` (Mullvad, TOR) vs `protocol: "http"` (NordVPN).
+- Adding a new relay source: create `src/relay/<source>/` directory + module, add `RelaySource` variant to `relay-types.ts`, wire in `startup.ts`.
 
 ## ANTI-PATTERNS
-- Do not replace regex parser with JSON assumptions.
 - Do not mutate selector state without resetting cursor/random-cycle state on `update()`.
-- Do not weaken CLI error messages into generic failures; explicit cause context is required.
+- Do not weaken API error messages into generic failures; explicit cause context is required.
 - Do not split relay contracts across unrelated modules; keep canonical types in `relay-types.ts`.
 
 ## VALIDATION
-- Run: `bun test test/relay-parser.test.ts`
 - Run: `bun test test/relay-selector.test.ts`
 - Run: `bun test test/tor-relay.test.ts`
-- For CLI adapter changes, run full suite: `bun test`
+- For loader changes, run full suite: `bun test`
 
 ## RELATED PATHS
 - `index.ts` (relay loading/refresh wiring)
 - `src/server/server.ts` (reads selector outputs and updates active config)
+- `src/runtime/startup.ts` (source loading orchestration)

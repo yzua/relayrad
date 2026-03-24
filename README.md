@@ -14,7 +14,7 @@ curl -x http://127.0.0.1:4123 http://httpbin.org/ip   # TOR circuit
 | --- | --- | --- | --- |
 | Mullvad | ~580 | None | No |
 | NordVPN | ~9000 | Service credentials | No |
-| TOR | 1 | None | Yes (local tor) |
+| TOR | 1 endpoint (routes through entire TOR network) | None | Yes (local tor) |
 
 ## Quick start
 
@@ -137,7 +137,7 @@ TOR relay has `provider: "tor-project"`, `ownership: "owned"`.
 - `POST /rotate` changes behavior without restart
 - Mullvad: SOCKS5 per server, no auth, public endpoints
 - NordVPN: HTTPS proxy on port 89, requires service credentials
-- TOR: one local SOCKS5 endpoint, rotates circuits per request
+- TOR: one local SOCKS5 endpoint (localhost:9050), but TOR internally routes through thousands of relays and rotates circuits per request
 
 ## Development
 

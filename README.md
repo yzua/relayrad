@@ -10,11 +10,11 @@ curl -x http://127.0.0.1:4123 http://httpbin.org/ip   # TOR circuit
 
 ## Sources
 
-| Source | Relays | Auth | Install needed |
-| --- | --- | --- | --- |
-| Mullvad | ~580 | None | No |
-| NordVPN | 12 SOCKS5 endpoints | Service credentials | No (requires VPN connection) |
-| TOR | 1 endpoint (routes through entire TOR network) | None | Yes (local tor) |
+| Source  | Relays                                         | Auth                | Install needed               |
+| ------- | ---------------------------------------------- | ------------------- | ---------------------------- |
+| Mullvad | ~580                                           | None                | No                           |
+| NordVPN | ~9000                                          | Service credentials | No (requires VPN connection) |
+| TOR     | 1 endpoint (routes through entire TOR network) | None                | Yes (local tor)              |
 
 ## Quick start
 
@@ -71,15 +71,17 @@ curl -x http://127.0.0.1:4123 \
 
 `X-Proxy-Session` pins repeated HTTP requests and repeated `CONNECT` requests with the same header value to one relay for 5 minutes of inactivity. If that relay becomes unhealthy, relayrad automatically rebinds the session to the next working relay.
 
+When the selected relay is TOR, relayrad also reuses the same SOCKS auth identity for the same `X-Proxy-Session` instead of generating a fresh one per connection. This gives the local TOR daemon a stable isolation token, but the final exit IP still depends on your TOR `SocksPort` isolation settings.
+
 ## API
 
-| Endpoint | Description |
-| --- | --- |
-| `GET /relays` | List available relays |
-| `POST /rotate` | Change rotation config |
-| `POST /relays/refresh` | Reload sources |
-| `GET /health` | Health check |
-| `GET /stats` | Request stats |
+| Endpoint               | Description            |
+| ---------------------- | ---------------------- |
+| `GET /relays`          | List available relays  |
+| `POST /rotate`         | Change rotation config |
+| `POST /relays/refresh` | Reload sources         |
+| `GET /health`          | Health check           |
+| `GET /stats`           | Request stats          |
 
 ```bash
 # filter by country, exclude some
@@ -93,27 +95,27 @@ curl -X POST http://127.0.0.1:4123/rotate \
 
 ## CLI flags
 
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--mullvad` | auto | Mullvad source |
-| `--tor` | off | TOR source |
-| `--nordvpn` | off | NordVPN source |
-| `--port`, `-p` | `4123` | HTTP proxy port |
-| `--socks5-port` | off | SOCKS5 listener port |
-| `--proxy-auth` | off | `user:pass` for incoming proxy auth |
-| `--tor-port` | `9050` | TOR SOCKS5 port |
-| `--log-proxy-sqlite` | off | SQLite log path |
-| `--no-log-proxy-console` | off | Disable console logs |
-| `--no-tui` | off | Skip interactive setup |
+| Flag                     | Default | Description                         |
+| ------------------------ | ------- | ----------------------------------- |
+| `--mullvad`              | auto    | Mullvad source                      |
+| `--tor`                  | off     | TOR source                          |
+| `--nordvpn`              | off     | NordVPN source                      |
+| `--port`, `-p`           | `4123`  | HTTP proxy port                     |
+| `--socks5-port`          | off     | SOCKS5 listener port                |
+| `--proxy-auth`           | off     | `user:pass` for incoming proxy auth |
+| `--tor-port`             | `9050`  | TOR SOCKS5 port                     |
+| `--log-proxy-sqlite`     | off     | SQLite log path                     |
+| `--no-log-proxy-console` | off     | Disable console logs                |
+| `--no-tui`               | off     | Skip interactive setup              |
 
 ## Environment variables
 
-| Variable | Description |
-| --- | --- |
-| `RELAYRAD_HOST` | Bind host (default `127.0.0.1`) |
-| `RELAYRAD_PORT` | Bind port (default `4123`) |
-| `NORDVPN_USERNAME` | NordVPN service username |
-| `NORDVPN_PASSWORD` | NordVPN service password |
+| Variable           | Description                     |
+| ------------------ | ------------------------------- |
+| `RELAYRAD_HOST`    | Bind host (default `127.0.0.1`) |
+| `RELAYRAD_PORT`    | Bind port (default `4123`)      |
+| `NORDVPN_USERNAME` | NordVPN service username        |
+| `NORDVPN_PASSWORD` | NordVPN service password        |
 
 See `.env.example` for all options.
 
@@ -121,21 +123,21 @@ See `.env.example` for all options.
 
 Fields for `GET /relays?...` and `POST /rotate` body:
 
-| Field | Type | Example |
-| --- | --- | --- |
-| `country` | string | `se`, `germany` |
-| `city` | string | `stockholm` |
-| `hostname` | string | substring match |
-| `exclude_country` | string | `us,de` (comma-separated) |
-| `sort` | `random`, `hostname`, `country`, `city` | default: `random` |
-| `unhealthyBackoffMs` | number | default: `30000` |
+| Field                | Type                                    | Example                   |
+| -------------------- | --------------------------------------- | ------------------------- |
+| `country`            | string                                  | `se`, `germany`           |
+| `city`               | string                                  | `stockholm`               |
+| `hostname`           | string                                  | substring match           |
+| `exclude_country`    | string                                  | `us,de` (comma-separated) |
+| `sort`               | `random`, `hostname`, `country`, `city` | default: `random`         |
+| `unhealthyBackoffMs` | number                                  | default: `30000`          |
 
 Mullvad-specific fields (only meaningful when filtering Mullvad relays):
 
-| Field | Type | Example | Notes |
-| --- | --- | --- | --- |
-| `provider` | string | `iRegister`, `M247` | Mullvad lists hosting provider per server |
-| `ownership` | `owned` or `rented` | | Mullvad owns some servers, rents others |
+| Field       | Type                | Example             | Notes                                     |
+| ----------- | ------------------- | ------------------- | ----------------------------------------- |
+| `provider`  | string              | `iRegister`, `M247` | Mullvad lists hosting provider per server |
+| `ownership` | `owned` or `rented` |                     | Mullvad owns some servers, rents others   |
 
 NordVPN relays always have `provider: "nordvpn"`, `ownership: "rented"`.
 TOR relay has `provider: "tor-project"`, `ownership: "owned"`.
@@ -144,6 +146,7 @@ TOR relay has `provider: "tor-project"`, `ownership: "owned"`.
 
 - Failed relays are marked unhealthy and skipped for 30s
 - `X-Proxy-Session` keeps related HTTP and CONNECT requests on one relay for 5 minutes of inactivity
+- TOR sticky sessions reuse one SOCKS auth identity per `X-Proxy-Session`; exit IP stability depends on local TOR isolation config
 - `POST /rotate` changes behavior without restart
 - Mullvad: SOCKS5 per server, no auth, public endpoints
 - NordVPN: SOCKS5 on `*.socks.nordhold.net:1080`, requires VPN connection + service credentials

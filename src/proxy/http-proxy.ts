@@ -10,6 +10,7 @@ import {
   formatHttpHeaders,
   openHttpProxySocket,
 } from "./http-upstream";
+import type { RelayRetryDeps } from "./relay-retry";
 import { tryRelays } from "./relay-retry";
 import {
   onceSocketClosed,
@@ -22,6 +23,9 @@ const UPSTREAM_HEADER_READ_TIMEOUT_MS = 10_000;
 
 export interface ProxyRuntime {
   pickRelay: () => RelayRecord | undefined;
+  pickStickyRelay: (sessionKey: string) => RelayRecord | undefined;
+  rememberStickyRelay: (sessionKey: string, relayHostname: string) => void;
+  clearStickyRelay: (sessionKey: string) => void;
   markRelayUnhealthy: (hostname: string) => void;
   requestLogger: ProxyRequestLogger;
   statsTracker: StatsTracker;
@@ -33,6 +37,9 @@ export async function handleHttpProxyRequest(
   runtime: ProxyRuntime,
 ): Promise<void> {
   const targetUrl = parseProxyTarget(clientRequest.url);
+  const sessionKey = parseStickySessionHeader(
+    clientRequest.headers["x-proxy-session"],
+  );
   if (!targetUrl || targetUrl.protocol !== "http:") {
     clientResponse.writeHead(400, { "content-type": "application/json" });
     clientResponse.end(
@@ -49,11 +56,7 @@ export async function handleHttpProxyRequest(
   headers.connection = "close";
 
   const lastError = await tryRelays(
-    {
-      pickRelay: runtime.pickRelay,
-      markRelayUnhealthy: runtime.markRelayUnhealthy,
-      statsTracker: runtime.statsTracker,
-    },
+    createRetryDeps(runtime, sessionKey),
     async (relay) => {
       if (relay.protocol === "http") {
         await handleHttpViaHttpProxy(
@@ -277,6 +280,7 @@ export async function handleConnectTunnel(
   clientSocket: Socket,
   head: Buffer,
   runtime: ProxyRuntime,
+  sessionKey?: string,
 ): Promise<void> {
   const destination = parseConnectTarget(requestUrl);
   if (!destination) {
@@ -286,11 +290,7 @@ export async function handleConnectTunnel(
   }
 
   const lastError = await tryRelays(
-    {
-      pickRelay: runtime.pickRelay,
-      markRelayUnhealthy: runtime.markRelayUnhealthy,
-      statsTracker: runtime.statsTracker,
-    },
+    createRetryDeps(runtime, sessionKey),
     async (relay) => {
       const upstreamSocket =
         relay.protocol === "http"
@@ -326,6 +326,53 @@ export async function handleConnectTunnel(
     );
     clientSocket.destroy();
   }
+}
+
+function createRetryDeps(
+  runtime: ProxyRuntime,
+  sessionKey?: string,
+): RelayRetryDeps {
+  const stickyRelay = sessionKey
+    ? runtime.pickStickyRelay(sessionKey)
+    : undefined;
+  let stickyRelayAvailable = Boolean(stickyRelay);
+
+  const deps: RelayRetryDeps = {
+    pickRelay: () => {
+      if (stickyRelayAvailable) {
+        stickyRelayAvailable = false;
+        return stickyRelay;
+      }
+
+      return runtime.pickRelay();
+    },
+    markRelayUnhealthy: runtime.markRelayUnhealthy,
+    statsTracker: runtime.statsTracker,
+  };
+
+  if (sessionKey) {
+    deps.onRelaySuccess = (relay) => {
+      runtime.rememberStickyRelay(sessionKey, relay.hostname);
+    };
+    deps.onRelayFailure = (relay) => {
+      if (relay.hostname === stickyRelay?.hostname) {
+        runtime.clearStickyRelay(sessionKey);
+      }
+    };
+  }
+
+  return deps;
+}
+
+function parseStickySessionHeader(
+  value: string | string[] | undefined,
+): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const sessionKey = value.trim();
+  return sessionKey ? sessionKey : undefined;
 }
 
 function parseConnectTarget(

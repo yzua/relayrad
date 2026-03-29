@@ -24,6 +24,9 @@ import {
   selectionConfigFromUrl,
   unknownFields,
 } from "./selection-config";
+import { createStickySessionManager } from "./sticky-session-manager";
+
+const STICKY_SESSION_TTL_MS = 5 * 60_000;
 
 export interface ProxyServerDeps {
   initialRelays: RelayRecord[];
@@ -43,9 +46,14 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
   let relays = [...deps.initialRelays];
   const selector = createRelaySelector(relays, defaultSelectionConfig);
   const relayListCache = new Map<string, RelayRecord[]>();
+  const stickySessions = createStickySessionManager(STICKY_SESSION_TTL_MS);
 
   const runtime: ProxyRuntime = {
     pickRelay: () => selector.next(),
+    pickStickyRelay: (sessionKey) => stickySessions.get(sessionKey, relays),
+    rememberStickyRelay: (sessionKey, relayHostname) =>
+      stickySessions.set(sessionKey, relayHostname),
+    clearStickyRelay: (sessionKey) => stickySessions.delete(sessionKey),
     markRelayUnhealthy: (hostname: string) => selector.markUnhealthy(hostname),
     requestLogger: deps.requestLogger,
     statsTracker: deps.statsTracker,
@@ -118,6 +126,7 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
       clientSocket as Socket,
       head,
       runtime,
+      parseStickySessionHeader(req.headers["x-proxy-session"]),
     ).catch((error) => {
       const body =
         error instanceof Error ? error.message : "CONNECT tunnel failed";
@@ -153,6 +162,17 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
       return server.address();
     },
   };
+}
+
+function parseStickySessionHeader(
+  value: string | string[] | undefined,
+): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const sessionKey = value.trim();
+  return sessionKey ? sessionKey : undefined;
 }
 
 interface RouteDeps {

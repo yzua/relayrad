@@ -82,6 +82,9 @@ if (startupConfig.socks5Port) {
 
   const socks5Runtime: ProxyRuntime = {
     pickRelay: () => selector.next(),
+    pickStickyRelay: () => undefined,
+    rememberStickyRelay: () => {},
+    clearStickyRelay: () => {},
     markRelayUnhealthy: (hostname: string) => selector.markUnhealthy(hostname),
     requestLogger,
     statsTracker,

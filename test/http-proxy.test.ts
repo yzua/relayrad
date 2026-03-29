@@ -50,6 +50,18 @@ function relayForPort(port: number, hostname: string): RelayRecord {
   });
 }
 
+function createProxyServerForRelays(
+  relays: RelayRecord[],
+  events: ProxyRequestLogEvent[],
+) {
+  return createServer({
+    initialRelays: relays,
+    refreshRelays: async () => relays,
+    requestLogger: createCapturedRequestLogger(events),
+    statsTracker: createStatsTracker(),
+  });
+}
+
 async function startHttpTargetServer() {
   const server = createHttpServer((req, res) => {
     res.writeHead(200, { "content-type": "text/plain" });
@@ -181,12 +193,10 @@ describe("proxy routing", () => {
     targetPort = (targetServer.address() as AddressInfo).port;
     const socksPort = (socksServer.address() as AddressInfo).port;
 
-    proxyServer = createServer({
-      initialRelays: [relayForPort(socksPort, "tt-exp-wg-001")],
-      refreshRelays: async () => [relayForPort(socksPort, "tt-exp-wg-001")],
-      requestLogger: createCapturedRequestLogger(loggedEvents),
-      statsTracker: createStatsTracker(),
-    });
+    proxyServer = createProxyServerForRelays(
+      [relayForPort(socksPort, "tt-exp-wg-001")],
+      loggedEvents,
+    );
 
     await proxyServer.listen(0, "127.0.0.1");
     proxyPort = (proxyServer.address() as AddressInfo).port;
@@ -268,15 +278,13 @@ describe("proxy routing", () => {
     await proxyServer.close();
 
     const socksPort = (socksServer.address() as AddressInfo).port;
-    proxyServer = createServer({
-      initialRelays: [
+    proxyServer = createProxyServerForRelays(
+      [
         relayForPort(65_000, "tt-exp-wg-bad"),
         relayForPort(socksPort, "tt-exp-wg-good"),
       ],
-      refreshRelays: async () => [relayForPort(socksPort, "tt-exp-wg-good")],
-      requestLogger: createCapturedRequestLogger(loggedEvents),
-      statsTracker: createStatsTracker(),
-    });
+      loggedEvents,
+    );
 
     await proxyServer.listen(0, "127.0.0.1");
     proxyPort = (proxyServer.address() as AddressInfo).port;
@@ -306,6 +314,209 @@ describe("proxy routing", () => {
     expect(body).toBe("target:GET:/retry");
     expect(loggedEvents).toHaveLength(1);
     expect(loggedEvents[0]?.relayHostname).toBe("tt-exp-wg-good");
+  });
+
+  test("reuses the same relay for repeated HTTP requests with the same X-Proxy-Session", async () => {
+    loggedEvents.length = 0;
+    await proxyServer.close();
+
+    const firstRelay = await startSocks5Server();
+    const secondRelay = await startSocks5Server();
+    const firstRelayPort = (firstRelay.server.address() as AddressInfo).port;
+    const secondRelayPort = (secondRelay.server.address() as AddressInfo).port;
+
+    proxyServer = createProxyServerForRelays(
+      [
+        relayForPort(firstRelayPort, "tt-exp-wg-sticky-a"),
+        relayForPort(secondRelayPort, "tt-exp-wg-sticky-b"),
+      ],
+      loggedEvents,
+    );
+
+    await proxyServer.listen(0, "127.0.0.1");
+    proxyPort = (proxyServer.address() as AddressInfo).port;
+
+    try {
+      for (let index = 0; index < 3; index += 1) {
+        await new Promise<string>((resolve, reject) => {
+          const req = httpRequest(
+            {
+              host: "127.0.0.1",
+              port: proxyPort,
+              method: "GET",
+              path: `http://127.0.0.1:${targetPort}/sticky-${index}`,
+              headers: {
+                "x-proxy-session": "session-1",
+              },
+            },
+            (res) => {
+              let data = "";
+              res.setEncoding("utf8");
+              res.on("data", (chunk) => {
+                data += chunk;
+              });
+              res.on("end", () => resolve(data));
+            },
+          );
+
+          req.on("error", reject);
+          req.end();
+        });
+      }
+
+      expect(loggedEvents).toHaveLength(3);
+      expect(
+        new Set(loggedEvents.map((event) => event.relayHostname)).size,
+      ).toBe(1);
+    } finally {
+      await proxyServer.close();
+      const defaultRelayPort = (socksServer.address() as AddressInfo).port;
+      proxyServer = createProxyServerForRelays(
+        [relayForPort(defaultRelayPort, "tt-exp-wg-001")],
+        loggedEvents,
+      );
+      await proxyServer.listen(0, "127.0.0.1");
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+      await new Promise<void>((resolve, reject) =>
+        firstRelay.server.close((error) => (error ? reject(error) : resolve())),
+      );
+      await new Promise<void>((resolve, reject) =>
+        secondRelay.server.close((error) =>
+          error ? reject(error) : resolve(),
+        ),
+      );
+    }
+  });
+
+  test("keeps different X-Proxy-Session values isolated from each other", async () => {
+    loggedEvents.length = 0;
+    await proxyServer.close();
+
+    const firstRelay = await startSocks5Server();
+    const secondRelay = await startSocks5Server();
+    const firstRelayPort = (firstRelay.server.address() as AddressInfo).port;
+    const secondRelayPort = (secondRelay.server.address() as AddressInfo).port;
+
+    proxyServer = createProxyServerForRelays(
+      [
+        relayForPort(firstRelayPort, "tt-exp-wg-session-a"),
+        relayForPort(secondRelayPort, "tt-exp-wg-session-b"),
+      ],
+      loggedEvents,
+    );
+
+    await proxyServer.listen(0, "127.0.0.1");
+    proxyPort = (proxyServer.address() as AddressInfo).port;
+
+    try {
+      for (const sessionId of ["session-a", "session-b"]) {
+        await new Promise<string>((resolve, reject) => {
+          const req = httpRequest(
+            {
+              host: "127.0.0.1",
+              port: proxyPort,
+              method: "GET",
+              path: `http://127.0.0.1:${targetPort}/${sessionId}`,
+              headers: {
+                "x-proxy-session": sessionId,
+              },
+            },
+            (res) => {
+              let data = "";
+              res.setEncoding("utf8");
+              res.on("data", (chunk) => {
+                data += chunk;
+              });
+              res.on("end", () => resolve(data));
+            },
+          );
+
+          req.on("error", reject);
+          req.end();
+        });
+      }
+
+      expect(loggedEvents).toHaveLength(2);
+      expect(loggedEvents[0]?.relayHostname).not.toBe(
+        loggedEvents[1]?.relayHostname,
+      );
+    } finally {
+      await proxyServer.close();
+      const defaultRelayPort = (socksServer.address() as AddressInfo).port;
+      proxyServer = createProxyServerForRelays(
+        [relayForPort(defaultRelayPort, "tt-exp-wg-001")],
+        loggedEvents,
+      );
+      await proxyServer.listen(0, "127.0.0.1");
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+      await new Promise<void>((resolve, reject) =>
+        firstRelay.server.close((error) => (error ? reject(error) : resolve())),
+      );
+      await new Promise<void>((resolve, reject) =>
+        secondRelay.server.close((error) =>
+          error ? reject(error) : resolve(),
+        ),
+      );
+    }
+  });
+
+  test("reuses the same relay for repeated CONNECT requests with the same X-Proxy-Session", async () => {
+    loggedEvents.length = 0;
+    await proxyServer.close();
+
+    const firstRelay = await startSocks5Server();
+    const secondRelay = await startSocks5Server();
+    const firstRelayPort = (firstRelay.server.address() as AddressInfo).port;
+    const secondRelayPort = (secondRelay.server.address() as AddressInfo).port;
+
+    proxyServer = createProxyServerForRelays(
+      [
+        relayForPort(firstRelayPort, "tt-exp-wg-connect-a"),
+        relayForPort(secondRelayPort, "tt-exp-wg-connect-b"),
+      ],
+      loggedEvents,
+    );
+
+    await proxyServer.listen(0, "127.0.0.1");
+    proxyPort = (proxyServer.address() as AddressInfo).port;
+
+    try {
+      for (let index = 0; index < 2; index += 1) {
+        const socket = createTcpConnection({
+          host: "127.0.0.1",
+          port: proxyPort,
+        });
+        await once(socket, "connect");
+
+        socket.write(
+          `CONNECT 127.0.0.1:${targetPort} HTTP/1.1\r\nHost: 127.0.0.1:${targetPort}\r\nX-Proxy-Session: connect-session\r\n\r\n`,
+        );
+        await readUntil(socket, "\r\n\r\n");
+        socket.destroy();
+      }
+
+      expect(loggedEvents).toHaveLength(2);
+      expect(
+        new Set(loggedEvents.map((event) => event.relayHostname)).size,
+      ).toBe(1);
+    } finally {
+      await proxyServer.close();
+      const defaultRelayPort = (socksServer.address() as AddressInfo).port;
+      proxyServer = createProxyServerForRelays(
+        [relayForPort(defaultRelayPort, "tt-exp-wg-001")],
+        loggedEvents,
+      );
+      await proxyServer.listen(0, "127.0.0.1");
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+      await new Promise<void>((resolve, reject) =>
+        firstRelay.server.close((error) => (error ? reject(error) : resolve())),
+      );
+      await new Promise<void>((resolve, reject) =>
+        secondRelay.server.close((error) =>
+          error ? reject(error) : resolve(),
+        ),
+      );
+    }
   });
 
   test("returns 502 when upstream closes before full headers", async () => {

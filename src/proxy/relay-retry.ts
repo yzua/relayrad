@@ -5,6 +5,8 @@ export interface RelayRetryDeps {
   pickRelay: () => RelayRecord | undefined;
   markRelayUnhealthy: (hostname: string) => void;
   statsTracker: StatsTracker;
+  onRelaySuccess?: (relay: RelayRecord) => void;
+  onRelayFailure?: (relay: RelayRecord) => void;
 }
 
 export async function tryRelays(
@@ -28,10 +30,12 @@ export async function tryRelays(
     try {
       await action(relay);
       deps.statsTracker.recordRequest(relay.hostname);
+      deps.onRelaySuccess?.(relay);
       return undefined;
     } catch (error) {
       deps.markRelayUnhealthy(relay.hostname);
       deps.statsTracker.recordRelayFailure(relay.hostname);
+      deps.onRelayFailure?.(relay);
       lastError =
         error instanceof Error
           ? error

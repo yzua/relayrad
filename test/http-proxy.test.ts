@@ -50,6 +50,26 @@ function relayForPort(port: number, hostname: string): RelayRecord {
   });
 }
 
+function torRelayForPort(port: number): RelayRecord {
+  return makeRelayRecord({
+    source: "tor",
+    countryName: "Tor",
+    countryCode: "tor",
+    cityName: "Tor Network",
+    cityCode: "tor",
+    hostname: "tor-relay",
+    ipv4: "127.0.0.1",
+    ipv6: "",
+    protocol: "socks5",
+    provider: "tor-project",
+    ownership: "owned",
+    socks5Hostname: "127.0.0.1",
+    socks5Port: port,
+    socks5UniqueAuth: true,
+    socks5Password: "",
+  });
+}
+
 function createProxyServerForRelays(
   relays: RelayRecord[],
   events: ProxyRequestLogEvent[],
@@ -170,6 +190,118 @@ async function startSocks5Server() {
     server,
     getHitCount() {
       return hitCount;
+    },
+  };
+}
+
+async function startAuthSocks5Server() {
+  const authUsernames: string[] = [];
+  const server = createTcpServer((clientSocket) => {
+    let buffer = Buffer.alloc(0);
+    let stage: "greeting" | "auth" | "request" | "tunnel" = "greeting";
+
+    clientSocket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+
+      if (stage === "greeting") {
+        if (buffer.length < 3) {
+          return;
+        }
+
+        const methodCount = buffer[1] ?? 0;
+        const needed = 2 + methodCount;
+        if (buffer.length < needed) {
+          return;
+        }
+
+        buffer = buffer.subarray(needed);
+        clientSocket.write(Buffer.from([0x05, 0x02]));
+        stage = "auth";
+      }
+
+      if (stage === "auth") {
+        if (buffer.length < 2) {
+          return;
+        }
+
+        const usernameLength = buffer[1] ?? 0;
+        const passwordLengthOffset = 2 + usernameLength;
+        if (buffer.length < passwordLengthOffset + 1) {
+          return;
+        }
+
+        const passwordLength = buffer[passwordLengthOffset] ?? 0;
+        const needed = passwordLengthOffset + 1 + passwordLength;
+        if (buffer.length < needed) {
+          return;
+        }
+
+        authUsernames.push(
+          buffer.subarray(2, 2 + usernameLength).toString("utf8"),
+        );
+        buffer = buffer.subarray(needed);
+        clientSocket.write(Buffer.from([0x01, 0x00]));
+        stage = "request";
+      }
+
+      if (stage === "request") {
+        if (buffer.length < 5) {
+          return;
+        }
+
+        const atyp = buffer[3];
+        let offset = 4;
+        let host = "";
+
+        if (atyp === 0x01) {
+          if (buffer.length < offset + 4 + 2) {
+            return;
+          }
+          host = Array.from(buffer.subarray(offset, offset + 4)).join(".");
+          offset += 4;
+        } else if (atyp === 0x03) {
+          const length = buffer[offset] ?? 0;
+          offset += 1;
+          if (buffer.length < offset + length + 2) {
+            return;
+          }
+          host = buffer.subarray(offset, offset + length).toString("utf8");
+          offset += length;
+        } else {
+          clientSocket.destroy();
+          return;
+        }
+
+        const port = buffer.readUInt16BE(offset);
+        buffer = Buffer.alloc(0);
+
+        const upstream = createTcpConnection({ host, port }, () => {
+          clientSocket.write(
+            Buffer.from([0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0]),
+          );
+          stage = "tunnel";
+          clientSocket.pipe(upstream);
+          upstream.pipe(clientSocket);
+        });
+
+        upstream.on("error", () => {
+          clientSocket.write(
+            Buffer.from([0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0]),
+          );
+          clientSocket.destroy();
+        });
+      }
+    });
+  });
+
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", () => resolve()),
+  );
+
+  return {
+    server,
+    getAuthUsernames() {
+      return [...authUsernames];
     },
   };
 }
@@ -515,6 +647,67 @@ describe("proxy routing", () => {
         secondRelay.server.close((error) =>
           error ? reject(error) : resolve(),
         ),
+      );
+    }
+  });
+
+  test("reuses the same SOCKS auth identity for TOR-style sticky sessions", async () => {
+    loggedEvents.length = 0;
+    await proxyServer.close();
+
+    const authRelay = await startAuthSocks5Server();
+    const authRelayPort = (authRelay.server.address() as AddressInfo).port;
+
+    proxyServer = createProxyServerForRelays(
+      [torRelayForPort(authRelayPort)],
+      loggedEvents,
+    );
+
+    await proxyServer.listen(0, "127.0.0.1");
+    proxyPort = (proxyServer.address() as AddressInfo).port;
+
+    try {
+      for (let index = 0; index < 2; index += 1) {
+        await new Promise<string>((resolve, reject) => {
+          const req = httpRequest(
+            {
+              host: "127.0.0.1",
+              port: proxyPort,
+              method: "GET",
+              path: `http://127.0.0.1:${targetPort}/tor-sticky-${index}`,
+              headers: {
+                "x-proxy-session": "tor-session-1",
+              },
+            },
+            (res) => {
+              let data = "";
+              res.setEncoding("utf8");
+              res.on("data", (chunk) => {
+                data += chunk;
+              });
+              res.on("end", () => resolve(data));
+            },
+          );
+
+          req.on("error", reject);
+          req.end();
+        });
+      }
+
+      const authUsernames = authRelay.getAuthUsernames();
+      expect(authUsernames).toHaveLength(2);
+      expect(authUsernames[0]).toBe(authUsernames[1]);
+    } finally {
+      await proxyServer.close();
+      const defaultRelayPort = (socksServer.address() as AddressInfo).port;
+      proxyServer = createProxyServerForRelays(
+        [relayForPort(defaultRelayPort, "tt-exp-wg-001")],
+        loggedEvents,
+      );
+      await proxyServer.listen(0, "127.0.0.1");
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+      await new Promise<void>((resolve, reject) =>
+        authRelay.server.close((error) => (error ? reject(error) : resolve())),
       );
     }
   });

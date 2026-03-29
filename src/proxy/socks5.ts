@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { connect as connectTcp, type Socket } from "node:net";
 import type { RelayRecord } from "../relay/relay-types";
 
@@ -14,11 +15,12 @@ export async function connectViaSocks5(
   relay: RelayRecord,
   targetHost: string,
   targetPort: number,
+  uniqueAuthKey?: string,
 ): Promise<Socket> {
   const socket = await openSocket(relay.socks5Hostname, relay.socks5Port);
 
   try {
-    const auth = resolveSocks5Auth(relay);
+    const auth = resolveSocks5Auth(relay, uniqueAuthKey);
     const hasAuth = auth !== undefined;
     const methodRequest = hasAuth
       ? Buffer.from([0x05, 0x01, 0x02])
@@ -51,10 +53,15 @@ export async function connectViaSocks5(
 
 function resolveSocks5Auth(
   relay: RelayRecord,
+  uniqueAuthKey?: string,
 ): { username: string; password: string } | undefined {
   if (relay.socks5UniqueAuth) {
+    const usernameSuffix = uniqueAuthKey
+      ? hashUniqueAuthKey(uniqueAuthKey)
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
     return {
-      username: `${relay.hostname}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      username: `${relay.hostname}-${usernameSuffix}`,
       password: relay.socks5Password ?? "",
     };
   }
@@ -67,6 +74,10 @@ function resolveSocks5Auth(
     username: relay.socks5Username,
     password: relay.socks5Password ?? "",
   };
+}
+
+function hashUniqueAuthKey(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
 function buildSocks5ConnectRequest(

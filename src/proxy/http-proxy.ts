@@ -75,6 +75,7 @@ export async function handleHttpProxyRequest(
           relay,
           targetUrl,
           headers,
+          sessionKey,
         );
       }
     },
@@ -93,11 +94,13 @@ async function handleHttpViaSocks5(
   relay: RelayRecord,
   targetUrl: URL,
   headers: Record<string, string | string[] | undefined>,
+  sessionKey?: string,
 ): Promise<void> {
   const upstreamSocket = await connectViaSocks5(
     relay,
     targetUrl.hostname,
     Number(targetUrl.port || 80),
+    sessionKey,
   );
 
   await new Promise<void>((resolve, reject) => {
@@ -295,7 +298,12 @@ export async function handleConnectTunnel(
       const upstreamSocket =
         relay.protocol === "http"
           ? await connectViaHttpProxy(relay, destination.host, destination.port)
-          : await connectViaSocks5(relay, destination.host, destination.port);
+          : await connectViaSocks5(
+              relay,
+              destination.host,
+              destination.port,
+              sessionKey,
+            );
       runtime.requestLogger.log({
         timestamp: new Date().toISOString(),
         requestType: "connect",

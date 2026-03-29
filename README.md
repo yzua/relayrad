@@ -62,7 +62,14 @@ curl --socks5-hostname 127.0.0.1:1080 https://api.example.com
 # Proxy auth
 bun run start -- --mullvad --proxy-auth admin:secret123
 curl -x http://127.0.0.1:4123 --proxy-user admin:secret123 http://httpbin.org/ip
+
+# Sticky session: reuse the same relay for related requests
+curl -x http://127.0.0.1:4123 \
+  -H 'X-Proxy-Session: checkout-flow-123' \
+  http://httpbin.org/ip
 ```
+
+`X-Proxy-Session` pins repeated HTTP requests and repeated `CONNECT` requests with the same header value to one relay for 5 minutes of inactivity. If that relay becomes unhealthy, relayrad automatically rebinds the session to the next working relay.
 
 ## API
 
@@ -136,6 +143,7 @@ TOR relay has `provider: "tor-project"`, `ownership: "owned"`.
 ## How it works
 
 - Failed relays are marked unhealthy and skipped for 30s
+- `X-Proxy-Session` keeps related HTTP and CONNECT requests on one relay for 5 minutes of inactivity
 - `POST /rotate` changes behavior without restart
 - Mullvad: SOCKS5 per server, no auth, public endpoints
 - NordVPN: SOCKS5 on `*.socks.nordhold.net:1080`, requires VPN connection + service credentials

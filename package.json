@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "start": "bun run index.ts",
+    "typecheck": "tsc --noEmit",
     "knip": "knip",
     "biome-format": "biome format --write .",
     "biome-lint": "biome lint ."
@@ -13,10 +14,8 @@
     "@biomejs/biome": "^2.4.6",
     "@types/bun": "latest",
     "@types/node": "^25.3.5",
-    "knip": "^5.85.0"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
+    "knip": "^6.4.1",
+    "typescript": "^6.0.2"
   },
   "dependencies": {
     "@inquirer/prompts": "^8.3.2"

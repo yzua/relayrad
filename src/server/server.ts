@@ -8,7 +8,9 @@ import type { ProxyRequestLogger } from "../logging/proxy-request-logger";
 import {
   handleConnectTunnel,
   handleHttpProxyRequest,
+  handleWebSocketUpgrade,
   type ProxyRuntime,
+  parseStickySessionHeader,
 } from "../proxy/http-proxy";
 import {
   createRelaySelector,
@@ -114,10 +116,7 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
       deps.proxyAuth &&
       !checkProxyAuthRaw(req.headers["proxy-authorization"], deps.proxyAuth)
     ) {
-      clientSocket.write(
-        'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="relayrad"\r\n\r\n',
-      );
-      clientSocket.destroy();
+      rejectProxyAuth(clientSocket as Socket);
       return;
     }
 
@@ -130,10 +129,29 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
     ).catch((error) => {
       const body =
         error instanceof Error ? error.message : "CONNECT tunnel failed";
-      clientSocket.write(
-        `HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
-      );
-      clientSocket.destroy();
+      sendSocketError(clientSocket as Socket, 502, "Bad Gateway", body);
+    });
+  });
+
+  server.on("upgrade", (req, clientSocket, head) => {
+    if (
+      deps.proxyAuth &&
+      !checkProxyAuthRaw(req.headers["proxy-authorization"], deps.proxyAuth)
+    ) {
+      rejectProxyAuth(clientSocket as Socket);
+      return;
+    }
+
+    void handleWebSocketUpgrade(
+      req,
+      clientSocket as Socket,
+      head,
+      runtime,
+      parseStickySessionHeader(req.headers["x-proxy-session"]),
+    ).catch((error) => {
+      const body =
+        error instanceof Error ? error.message : "WebSocket upgrade failed";
+      sendSocketError(clientSocket as Socket, 502, "Bad Gateway", body);
     });
   });
 
@@ -164,17 +182,6 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
   };
 }
 
-function parseStickySessionHeader(
-  value: string | string[] | undefined,
-): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const sessionKey = value.trim();
-  return sessionKey ? sessionKey : undefined;
-}
-
 interface RouteDeps {
   listRelays: (filters: RelaySelectionConfig) => RelayRecord[];
   updateConfig: (config: RelaySelectionConfig) => ResolvedRelaySelectionConfig;
@@ -191,7 +198,10 @@ async function routeRequest(
 ): Promise<void> {
   const requestUrl = req.url ?? "/";
   if (isProxyRequest(requestUrl)) {
-    if (proxyAuth && !checkProxyAuth(req, proxyAuth)) {
+    if (
+      proxyAuth &&
+      !checkProxyAuthRaw(req.headers["proxy-authorization"], proxyAuth)
+    ) {
       sendProxyAuthRequired(res);
       return;
     }
@@ -264,7 +274,7 @@ async function routeRequest(
 }
 
 function isProxyRequest(url: string): boolean {
-  return /^http:\/\//i.test(url);
+  return /^(http|ws):\/\//i.test(url);
 }
 
 function parseRequestUrl(
@@ -303,13 +313,6 @@ function relayFilterCacheKey(filters: RelaySelectionConfig): string {
   });
 }
 
-function checkProxyAuth(
-  req: IncomingMessage,
-  expected: { username: string; password: string },
-): boolean {
-  return checkProxyAuthRaw(req.headers["proxy-authorization"], expected);
-}
-
 function sendProxyAuthRequired(res: ServerResponse): void {
   res.writeHead(407, {
     "proxy-authenticate": 'Basic realm="relayrad"',
@@ -336,4 +339,23 @@ function checkProxyAuthRaw(
     decoded.slice(0, separator) === expected.username &&
     decoded.slice(separator + 1) === expected.password
   );
+}
+
+function rejectProxyAuth(socket: Socket): void {
+  socket.write(
+    'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="relayrad"\r\n\r\n',
+  );
+  socket.destroy();
+}
+
+function sendSocketError(
+  socket: Socket,
+  statusCode: number,
+  statusText: string,
+  body: string,
+): void {
+  socket.write(
+    `HTTP/1.1 ${statusCode} ${statusText}\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+  );
+  socket.destroy();
 }

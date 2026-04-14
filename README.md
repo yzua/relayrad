@@ -24,7 +24,7 @@ bun run start           # interactive TUI
 bun run start -- --mullvad --nordvpn   # skip TUI
 ```
 
-**NordVPN** requires an active NordVPN VPN connection on the host. SOCKS5 credentials are needed. Get them at:
+**NordVPN** requires an active NordVPN VPN connection on the host. Service credentials are needed. Get them at:
 `https://my.nordaccount.com/dashboard/nordvpn/manual-configuration/service-credentials/`
 
 > **Note:** NordVPN currently requires the host to be connected to the VPN for proxy access. We are working on a solution to enable all NordVPN servers standalone without a VPN connection.
@@ -110,12 +110,15 @@ curl -X POST http://127.0.0.1:4123/rotate \
 
 ## Environment variables
 
-| Variable           | Description                     |
-| ------------------ | ------------------------------- |
-| `RELAYRAD_HOST`    | Bind host (default `127.0.0.1`) |
-| `RELAYRAD_PORT`    | Bind port (default `4123`)      |
-| `NORDVPN_USERNAME` | NordVPN service username        |
-| `NORDVPN_PASSWORD` | NordVPN service password        |
+| Variable                       | Description                      |
+| ------------------------------ | -------------------------------- |
+| `RELAYRAD_HOST`                | Bind host (default `127.0.0.1`)  |
+| `RELAYRAD_PORT`                | Bind port (default `4123`)       |
+| `NORDVPN_USERNAME`             | NordVPN service username         |
+| `NORDVPN_PASSWORD`             | NordVPN service password         |
+| `NORDVPN_API_URL`              | Override NordVPN API endpoint    |
+| `RELAYRAD_SOCKS_HOST_OVERRIDE` | Override Mullvad SOCKS5 hostname |
+| `RELAYRAD_SOCKS_PORT_OVERRIDE` | Override Mullvad SOCKS5 port     |
 
 See `.env.example` for all options.
 
@@ -145,12 +148,13 @@ TOR relay has `provider: "tor-project"`, `ownership: "owned"`.
 ## How it works
 
 - Failed relays are marked unhealthy and skipped for 30s
-- `X-Proxy-Session` keeps related HTTP and CONNECT requests on one relay for 5 minutes of inactivity
+- `X-Proxy-Session` keeps related HTTP, CONNECT, and WebSocket requests on one relay for 5 minutes of inactivity
 - TOR sticky sessions reuse one SOCKS auth identity per `X-Proxy-Session`; exit IP stability depends on local TOR isolation config
 - `POST /rotate` changes behavior without restart
 - Mullvad: SOCKS5 per server, no auth, public endpoints
-- NordVPN: SOCKS5 on `*.socks.nordhold.net:1080`, requires VPN connection + service credentials
+- NordVPN: HTTP proxy (TLS) on `*.proxy.nordvpn.com:89`, requires VPN connection + service credentials
 - TOR: one local SOCKS5 endpoint (localhost:9050), but TOR internally routes through thousands of relays and rotates circuits per request
+- WebSocket upgrades are proxied through the same relay retry and sticky session paths
 
 ## Development
 

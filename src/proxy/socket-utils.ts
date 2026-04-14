@@ -121,3 +121,39 @@ export function onceSocketClosed(socket: Socket): Promise<void> {
     socket.once("end", finish);
   });
 }
+
+export function readExact(socket: Socket, count: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let received = 0;
+
+    const onData = (chunk: Buffer) => {
+      chunks.push(chunk);
+      received += chunk.length;
+      if (received >= count) {
+        cleanup();
+        resolve(Buffer.concat(chunks, received));
+      }
+    };
+
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    const onClose = () => {
+      cleanup();
+      reject(new Error("Socket closed before data received"));
+    };
+
+    const cleanup = () => {
+      socket.off("data", onData);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+    };
+
+    socket.on("data", onData);
+    socket.on("error", onError);
+    socket.on("close", onClose);
+  });
+}

@@ -46,37 +46,17 @@ export function parseRuntimeOptions({
 }
 
 function parsePortFlag(argv: string[]): number | undefined {
-  for (let index = 0; index < argv.length; index += 1) {
-    const value = argv[index];
-    if (value !== "--port" && value !== "-p") {
-      continue;
-    }
-
-    if (argv[index + 1] === undefined) {
-      throw new Error(`Missing port value for ${value}`);
-    }
-
-    return parsePortValue(argv[index + 1]);
-  }
-
-  return undefined;
+  const value = extractFlagValue(argv, "Missing port value", "--port", "-p");
+  if (value === undefined) return undefined;
+  return parsePortValue(value);
 }
 
 function parseLogProxySqlitePath(argv: string[]): string | undefined {
-  for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index] !== "--log-proxy-sqlite") {
-      continue;
-    }
-
-    const value = argv[index + 1];
-    if (value === undefined) {
-      throw new Error("Missing SQLite path value for --log-proxy-sqlite");
-    }
-
-    return value;
-  }
-
-  return undefined;
+  return extractFlagValue(
+    argv,
+    "Missing SQLite path value",
+    "--log-proxy-sqlite",
+  );
 }
 
 function parseLogProxyConsole(argv: string[]): boolean {
@@ -88,54 +68,44 @@ function parseLogProxyConsole(argv: string[]): boolean {
 }
 
 function parseSocks5Port(argv: string[]): number | undefined {
-  for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index] !== "--socks5-port") {
-      continue;
-    }
-
-    if (argv[index + 1] === undefined) {
-      throw new Error("Missing port value for --socks5-port");
-    }
-
-    return parsePortValue(argv[index + 1]);
-  }
-
-  return undefined;
+  const value = extractFlagValue(argv, "Missing port value", "--socks5-port");
+  if (value === undefined) return undefined;
+  return parsePortValue(value);
 }
 
 function parseProxyAuth(
   argv: string[],
 ): { username: string; password: string } | undefined {
+  const value = extractFlagValue(argv, "Missing value", "--proxy-auth");
+  if (value === undefined) return undefined;
+  return parseProxyAuthValue(value);
+}
+
+function parseTorPort(argv: string[]): number {
+  const value = extractFlagValue(argv, "Missing port value", "--tor-port");
+  return value ? (parsePortValue(value) ?? 9050) : 9050;
+}
+
+function extractFlagValue(
+  argv: string[],
+  errorPrefix: string,
+  ...flags: string[]
+): string | undefined {
   for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index] !== "--proxy-auth") {
+    const flag = argv[index];
+    if (flag === undefined || !flags.includes(flag)) {
       continue;
     }
 
     const value = argv[index + 1];
-    if (!value) {
-      throw new Error("Missing value for --proxy-auth (expected user:pass)");
+    if (value === undefined) {
+      throw new Error(`${errorPrefix} for ${flag}`);
     }
 
-    return parseProxyAuthValue(value);
+    return value;
   }
 
   return undefined;
-}
-
-function parseTorPort(argv: string[]): number {
-  for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index] !== "--tor-port") {
-      continue;
-    }
-
-    if (argv[index + 1] === undefined) {
-      throw new Error("Missing port value for --tor-port");
-    }
-
-    return parsePortValue(argv[index + 1]) ?? 9050;
-  }
-
-  return 9050;
 }
 
 function parseFlag(argv: string[], flag: string): boolean {

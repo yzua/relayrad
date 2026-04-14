@@ -3,6 +3,9 @@ import { connect as connectTcp, type Socket } from "node:net";
 import type { RelayRecord } from "../relay/relay-types";
 
 const PREWARM_SOCKET_IDLE_MS = 2_000;
+const SOCKS5_HANDSHAKE_TIMEOUT_MS = 5_000;
+const SOCKS5_CONNECT_TIMEOUT_MS = 30_000;
+const TCP_CONNECT_TIMEOUT_MS = 10_000;
 
 interface PrewarmedSocketEntry {
   socket: Socket;
@@ -25,10 +28,20 @@ export async function connectViaSocks5(
     const methodRequest = hasAuth
       ? Buffer.from([0x05, 0x01, 0x02])
       : Buffer.from([0x05, 0x01, 0x00]);
-    const methodResponse = await writeAndExpect(socket, methodRequest, 2);
+    const methodResponse = await writeAndExpect(
+      socket,
+      methodRequest,
+      2,
+      SOCKS5_HANDSHAKE_TIMEOUT_MS,
+    );
 
     if (methodResponse[1] === 0x02 && hasAuth) {
-      await socks5Auth(socket, auth.username, auth.password);
+      await socks5Auth(
+        socket,
+        auth.username,
+        auth.password,
+        SOCKS5_HANDSHAKE_TIMEOUT_MS,
+      );
     } else if (methodResponse[1] !== 0x00) {
       throw new Error(
         `SOCKS5 auth negotiation failed with method ${methodResponse[1]}`,
@@ -36,7 +49,12 @@ export async function connectViaSocks5(
     }
 
     const request = buildSocks5ConnectRequest(targetHost, targetPort);
-    const response = await writeAndExpect(socket, request, 10);
+    const response = await writeAndExpect(
+      socket,
+      request,
+      10,
+      SOCKS5_CONNECT_TIMEOUT_MS,
+    );
 
     if (response[1] !== 0x00) {
       throw new Error(
@@ -125,11 +143,21 @@ function openSocket(host: string, port: number): Promise<Socket> {
 
   return new Promise((resolve, reject) => {
     const socket = connectTcp({ host, port });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`TCP connect to ${host}:${port} timed out`));
+    }, TCP_CONNECT_TIMEOUT_MS);
+    timer.unref?.();
+
     socket.once("connect", () => {
+      clearTimeout(timer);
       prewarmRelaySocket(host, port);
       resolve(socket);
     });
-    socket.once("error", reject);
+    socket.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
   });
 }
 
@@ -137,10 +165,12 @@ function writeAndExpect(
   socket: Socket,
   payload: Buffer,
   minimumLength: number,
+  timeoutMs?: number,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let totalLength = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const onData = (chunk: Buffer) => {
       chunks.push(chunk);
@@ -159,11 +189,23 @@ function writeAndExpect(
     const cleanup = () => {
       socket.off("data", onData);
       socket.off("error", onError);
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
     };
 
     socket.on("data", onData);
     socket.on("error", onError);
     socket.write(payload);
+
+    if (timeoutMs && timeoutMs > 0) {
+      timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`SOCKS5 handshake timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      timer.unref?.();
+    }
   });
 }
 
@@ -171,6 +213,7 @@ async function socks5Auth(
   socket: Socket,
   username: string,
   password: string,
+  timeoutMs?: number,
 ): Promise<void> {
   const userBuf = Buffer.from(username, "utf8");
   const passBuf = Buffer.from(password, "utf8");
@@ -186,7 +229,7 @@ async function socks5Auth(
     passBuf,
   ]);
 
-  const response = await writeAndExpect(socket, payload, 2);
+  const response = await writeAndExpect(socket, payload, 2, timeoutMs);
   if (response[1] !== 0x00) {
     throw new Error("SOCKS5 username/password authentication rejected");
   }

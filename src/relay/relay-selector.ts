@@ -136,7 +136,7 @@ export function createRelaySelector(
       existingKey !== sourceRelayKey ||
       existingCursor >= existingCycle.length
     ) {
-      randomSourceRelayCycles.set(source, shuffleRelays([...sourceRelays]));
+      randomSourceRelayCycles.set(source, shuffleValues([...sourceRelays]));
       randomSourceRelayCursors.set(source, 0);
     }
 
@@ -166,7 +166,7 @@ export function createRelaySelector(
     ) {
       randomSourceKey = cycleKey;
       randomSourceRelayCycles = new Map([
-        [source, shuffleRelays([...candidates])],
+        [source, shuffleValues([...candidates])],
       ]);
       randomSourceRelayCursors = new Map([[source, 0]]);
     }
@@ -266,7 +266,7 @@ function sortRelays(
       );
       return next;
     case "random":
-      return shuffleRelays(next);
+      return shuffleValues(next);
     case "hostname":
       next.sort((a, b) => a.hostname.localeCompare(b.hostname));
       return next;
@@ -287,10 +287,6 @@ function groupRelaysBySource(
   }
 
   return bySource;
-}
-
-function shuffleRelays(relays: RelayRecord[]): RelayRecord[] {
-  return shuffleValues(relays);
 }
 
 function shuffleValues<T>(values: T[]): T[] {

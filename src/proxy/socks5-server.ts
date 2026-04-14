@@ -1,7 +1,9 @@
 import { createServer as createTcpServer, type Socket } from "node:net";
+import { createLogEvent } from "../logging/proxy-request-logger";
 import type { ProxyRuntime } from "./http-proxy";
 import { connectViaHttpProxy } from "./http-upstream";
 import { type RelayRetryDeps, tryRelays } from "./relay-retry";
+import { readExact } from "./socket-utils";
 import { connectViaSocks5 } from "./socks5";
 
 export interface Socks5Server {
@@ -103,14 +105,9 @@ async function handleClient(
         ? await connectViaHttpProxy(relay, targetHost, targetPort)
         : await connectViaSocks5(relay, targetHost, targetPort);
 
-    runtime.requestLogger.log({
-      timestamp: new Date().toISOString(),
-      requestType: "connect",
-      destinationHost: targetHost,
-      destinationPort: targetPort,
-      relayHostname: relay.hostname,
-      relaySource: relay.source,
-    });
+    runtime.requestLogger.log(
+      createLogEvent("connect", targetHost, targetPort, relay),
+    );
 
     clientSocket.write(
       Buffer.from([0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0]),
@@ -138,40 +135,4 @@ async function handleClient(
     clientSocket.write(Buffer.from([0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));
     clientSocket.destroy();
   }
-}
-
-function readExact(socket: Socket, count: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let received = 0;
-
-    const onData = (chunk: Buffer) => {
-      chunks.push(chunk);
-      received += chunk.length;
-      if (received >= count) {
-        cleanup();
-        resolve(Buffer.concat(chunks, received));
-      }
-    };
-
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-
-    const onClose = () => {
-      cleanup();
-      reject(new Error("Socket closed before data received"));
-    };
-
-    const cleanup = () => {
-      socket.off("data", onData);
-      socket.off("error", onError);
-      socket.off("close", onClose);
-    };
-
-    socket.on("data", onData);
-    socket.on("error", onError);
-    socket.on("close", onClose);
-  });
 }

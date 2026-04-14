@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import type { ProxyRequestLogger } from "../logging/proxy-request-logger";
+import { createLogEvent } from "../logging/proxy-request-logger";
 import type { RelayRecord } from "../relay/relay-types";
 import type { StatsTracker } from "../stats";
 import {
@@ -40,11 +41,14 @@ export async function handleHttpProxyRequest(
   const sessionKey = parseStickySessionHeader(
     clientRequest.headers["x-proxy-session"],
   );
-  if (!targetUrl || targetUrl.protocol !== "http:") {
+  if (
+    !targetUrl ||
+    (targetUrl.protocol !== "http:" && targetUrl.protocol !== "ws:")
+  ) {
     clientResponse.writeHead(400, { "content-type": "application/json" });
     clientResponse.end(
       JSON.stringify({
-        error: "Proxy requests must use an absolute http:// URL",
+        error: "Proxy requests must use an absolute http:// or ws:// URL",
       }),
     );
     return;
@@ -117,14 +121,14 @@ async function handleHttpViaSocks5(
     });
 
     relayHttpResponse(upstreamSocket, clientResponse, () => {
-      runtime.requestLogger.log({
-        timestamp: new Date().toISOString(),
-        requestType: "http",
-        destinationHost: targetUrl.hostname,
-        destinationPort: Number(targetUrl.port || 80),
-        relayHostname: relay.hostname,
-        relaySource: relay.source,
-      });
+      runtime.requestLogger.log(
+        createLogEvent(
+          "http",
+          targetUrl.hostname,
+          Number(targetUrl.port || 80),
+          relay,
+        ),
+      );
     })
       .then(resolve)
       .catch((error) => {
@@ -168,14 +172,14 @@ async function handleHttpViaHttpProxy(
     });
 
     relayHttpResponse(upstreamSocket, clientResponse, () => {
-      runtime.requestLogger.log({
-        timestamp: new Date().toISOString(),
-        requestType: "http",
-        destinationHost: targetUrl.hostname,
-        destinationPort: Number(targetUrl.port || 80),
-        relayHostname: relay.hostname,
-        relaySource: relay.source,
-      });
+      runtime.requestLogger.log(
+        createLogEvent(
+          "http",
+          targetUrl.hostname,
+          Number(targetUrl.port || 80),
+          relay,
+        ),
+      );
     })
       .then(resolve)
       .catch((error) => {
@@ -295,23 +299,24 @@ export async function handleConnectTunnel(
   const lastError = await tryRelays(
     createRetryDeps(runtime, sessionKey),
     async (relay) => {
-      const upstreamSocket =
+      const connectPromise =
         relay.protocol === "http"
-          ? await connectViaHttpProxy(relay, destination.host, destination.port)
-          : await connectViaSocks5(
+          ? connectViaHttpProxy(relay, destination.host, destination.port)
+          : connectViaSocks5(
               relay,
               destination.host,
               destination.port,
               sessionKey,
             );
-      runtime.requestLogger.log({
-        timestamp: new Date().toISOString(),
-        requestType: "connect",
-        destinationHost: destination.host,
-        destinationPort: destination.port,
-        relayHostname: relay.hostname,
-        relaySource: relay.source,
-      });
+
+      const upstreamSocket = await raceConnectOrClientClose(
+        connectPromise,
+        clientSocket,
+      );
+
+      runtime.requestLogger.log(
+        createLogEvent("connect", destination.host, destination.port, relay),
+      );
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
 
       if (head.length > 0) {
@@ -334,6 +339,113 @@ export async function handleConnectTunnel(
     );
     clientSocket.destroy();
   }
+}
+
+export async function handleWebSocketUpgrade(
+  req: IncomingMessage,
+  clientSocket: Socket,
+  head: Buffer,
+  runtime: ProxyRuntime,
+  sessionKey?: string,
+): Promise<void> {
+  const target = parseWsTarget(req.url, req.headers.host);
+  if (!target) {
+    clientSocket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+    clientSocket.destroy();
+    return;
+  }
+
+  const lastError = await tryRelays(
+    createRetryDeps(runtime, sessionKey),
+    async (relay) => {
+      const connectPromise =
+        relay.protocol === "http"
+          ? connectViaHttpProxy(relay, target.host, target.port)
+          : connectViaSocks5(relay, target.host, target.port, sessionKey);
+
+      const upstreamSocket = await raceConnectOrClientClose(
+        connectPromise,
+        clientSocket,
+      );
+
+      runtime.requestLogger.log(
+        createLogEvent("upgrade", target.host, target.port, relay),
+      );
+
+      writeWsUpgradeRequest(upstreamSocket, req, target);
+
+      if (head.length > 0) {
+        upstreamSocket.write(head);
+      }
+
+      clientSocket.pipe(upstreamSocket);
+      upstreamSocket.pipe(clientSocket);
+
+      await Promise.race([
+        onceSocketClosed(clientSocket),
+        onceSocketClosed(upstreamSocket),
+      ]);
+    },
+  );
+
+  if (lastError) {
+    clientSocket.write(
+      `HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(lastError.message)}\r\n\r\n${lastError.message}`,
+    );
+    clientSocket.destroy();
+  }
+}
+
+function parseWsTarget(
+  url: string | undefined,
+  hostHeader?: string,
+): { host: string; port: number; path: string } | undefined {
+  if (!url) return undefined;
+
+  try {
+    if (url.includes("://")) {
+      const parsed = new URL(url);
+      const defaultPort = parsed.protocol === "wss:" ? 443 : 80;
+      const port = Number(parsed.port) || defaultPort;
+      return {
+        host: parsed.hostname,
+        port,
+        path: parsed.pathname + (parsed.search || ""),
+      };
+    }
+
+    if (hostHeader) {
+      const colonIdx = hostHeader.lastIndexOf(":");
+      const hostname =
+        colonIdx > 0 ? hostHeader.slice(0, colonIdx) : hostHeader;
+      const port = colonIdx > 0 ? Number(hostHeader.slice(colonIdx + 1)) : 80;
+      if (!hostname || !Number.isFinite(port) || port <= 0) return undefined;
+      return { host: hostname, port, path: url };
+    }
+
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeWsUpgradeRequest(
+  socket: Socket,
+  req: IncomingMessage,
+  target: { host: string; port: number; path: string },
+): void {
+  const headers: Record<string, string | string[] | undefined> = {
+    ...req.headers,
+  };
+  delete headers["proxy-connection"];
+  delete headers["proxy-authorization"];
+  headers["host"] =
+    target.port === 80 || target.port === 443
+      ? target.host
+      : `${target.host}:${target.port}`;
+
+  const requestLine = `${req.method ?? "GET"} ${target.path || "/"} HTTP/1.1`;
+  socket.write(formatHttpHeaders(requestLine, headers));
 }
 
 function createRetryDeps(
@@ -372,7 +484,7 @@ function createRetryDeps(
   return deps;
 }
 
-function parseStickySessionHeader(
+export function parseStickySessionHeader(
   value: string | string[] | undefined,
 ): string | undefined {
   if (typeof value !== "string") {
@@ -402,4 +514,29 @@ function parseConnectTarget(
   }
 
   return { host, port };
+}
+
+async function raceConnectOrClientClose(
+  connectPromise: Promise<Socket>,
+  clientSocket: Socket,
+): Promise<Socket> {
+  let cleanupClientListeners: (() => void) | undefined;
+
+  const clientGone = new Promise<never>((_, reject) => {
+    const onEnd = () =>
+      reject(new Error("Client disconnected before tunnel was established"));
+    clientSocket.once("end", onEnd);
+    clientSocket.once("close", onEnd);
+    cleanupClientListeners = () => {
+      clientSocket.off("end", onEnd);
+      clientSocket.off("close", onEnd);
+    };
+  });
+
+  try {
+    const socket = await Promise.race([connectPromise, clientGone]);
+    return socket;
+  } finally {
+    cleanupClientListeners?.();
+  }
 }

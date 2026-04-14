@@ -2,11 +2,27 @@ import { Database } from "bun:sqlite";
 
 export interface ProxyRequestLogEvent {
   timestamp: string;
-  requestType: "http" | "connect";
+  requestType: "http" | "connect" | "upgrade";
   destinationHost: string;
   destinationPort: number;
   relayHostname: string;
   relaySource: string;
+}
+
+export function createLogEvent(
+  requestType: ProxyRequestLogEvent["requestType"],
+  destinationHost: string,
+  destinationPort: number,
+  relay: { hostname: string; source: string },
+): ProxyRequestLogEvent {
+  return {
+    timestamp: new Date().toISOString(),
+    requestType,
+    destinationHost,
+    destinationPort,
+    relayHostname: relay.hostname,
+    relaySource: relay.source,
+  };
 }
 
 export interface ProxyRequestLogger {

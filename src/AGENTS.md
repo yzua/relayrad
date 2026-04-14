@@ -11,7 +11,7 @@
 ```text
 src/
 |- tui/                    # Interactive TUI for source/options selection
-|- server/                 # HTTP route handling + runtime state wiring
+|- server/                 # HTTP route handling, proxy dispatch, runtime state wiring
 |- proxy/                  # upstream transport, SOCKS5 connect, SOCKS5 server
 |  `- AGENTS.md
 |- relay/                  # relay contracts, API loaders, selection/backoff logic
@@ -28,7 +28,7 @@ src/
 
 | Task                              | File                                   | Notes                                                                      |
 | --------------------------------- | -------------------------------------- | -------------------------------------------------------------------------- |
-| Add/adjust API route behavior     | `src/server/server.ts`                 | Keep `routeRequest` branch style and JSON response helpers                 |
+| Add/adjust API route behavior     | `src/server/routes.ts`                 | Keep `routeRequest` branch style and JSON response helpers                 |
 | Change sticky session behavior    | `src/server/sticky-session-manager.ts` | Session-keyed relay pinning with inactivity TTL                            |
 | Change proxy request dispatch     | `src/proxy/AGENTS.md`                  | Child doc covers transport-specific invariants                             |
 | Change relay selection            | `src/relay/AGENTS.md`                  | Child doc covers selector invariants                                       |

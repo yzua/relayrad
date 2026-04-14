@@ -19,12 +19,13 @@ mullvader/
 |  |  `- tui.ts             # Interactive TUI using @inquirer/prompts
 |  |- proxy/
 |  |  |- AGENTS.md
-|  |  |- http-proxy.ts      # HTTP proxy forwarding + CONNECT tunnel + WebSocket upgrade
+|  |  |- http-proxy.ts      # HTTP proxy forwarding + sticky session + retry deps
 |  |  |- http-upstream.ts   # TLS HTTP proxy upstream (NordVPN port 89)
-|  |  |- socket-utils.ts    # Shared: readUntilHeaderEnd, waitForSocketDrain, onceSocketClosed
+|  |  |- socket-utils.ts    # Shared: readUntilHeaderEnd, waitForSocketDrain, onceSocketClosed, readExact
 |  |  |- socks5.ts          # SOCKS5 client handshake + prewarm cache
 |  |  |- socks5-server.ts   # SOCKS5 server listener (protocol-aware dispatch)
-|  |  `- relay-retry.ts     # Retry across relays on failure
+|  |  |- relay-retry.ts     # Retry across relays on failure
+|  |  `- tunnel-handlers.ts # CONNECT tunnel + WebSocket upgrade via relay retry
 |  |- relay/
 |  |  |- AGENTS.md
 |  |  |- relay-types.ts     # RelayRecord, RelaySource, filters
@@ -40,7 +41,8 @@ mullvader/
 |  |  |- runtime-validation.ts # Port + auth input validation
 |  |  `- startup.ts         # Startup orchestration + source loading
 |  |- server/
-|  |  |- server.ts          # HTTP server + API routes + proxy dispatch
+|  |  |- server.ts          # HTTP server setup + proxy dispatch wiring
+|  |  |- routes.ts          # API route handling + proxy auth + JSON helpers
 |  |  |- selection-config.ts # Request config parsing + sanitization
 |  |  |- sticky-session-manager.ts # X-Proxy-Session pinning + TTL
 |  |  `- config.ts          # Default selection config
@@ -58,49 +60,54 @@ mullvader/
 
 ## WHERE TO LOOK
 
-| Task                             | Location                               | Notes                                                                                    |
-| -------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Boot + shutdown + TUI gate       | `index.ts`                             | TUI check, multi-source loading, server boot, SIGINT/SIGTERM                             |
-| Interactive TUI                  | `src/tui/tui.ts`                       | @inquirer/prompts: source select, logging, ports, auth                                   |
-| Route handling + API surface     | `src/server/server.ts`                 | `/relays`, `/rotate`, `/relays/refresh`, `/health`, `/stats`                             |
-| Sticky session management        | `src/server/sticky-session-manager.ts` | `X-Proxy-Session` pinning with TTL, relay rebinding on unhealthy                         |
-| HTTP proxy + CONNECT + WebSocket | `src/proxy/http-proxy.ts`              | Retry flow, upstream header parsing, relay fallback, stats recording                     |
-| HTTP upstream (NordVPN TLS)      | `src/proxy/http-upstream.ts`           | CONNECT via TLS, HTTP request formatting, proxy auth header                              |
-| Shared socket utilities          | `src/proxy/socket-utils.ts`            | `readUntilHeaderEnd`, `waitForSocketDrain`, `onceSocketClosed`                           |
-| SOCKS5 client handshake          | `src/proxy/socks5.ts`                  | Connect framing + socket prewarm cache                                                   |
-| SOCKS5 server listener           | `src/proxy/socks5-server.ts`           | Accepts SOCKS5 clients, protocol-aware relay dispatch                                    |
-| Relay selection strategy         | `src/relay/relay-selector.ts`          | Filters, sort modes, round-robin/random cycle, unhealthy backoff                         |
-| Mullvad API loader               | `src/relay/mullvad/mullvad-api.ts`     | Fetches from `api.mullvad.net`, maps to `RelayRecord`                                    |
-| NordVPN API loader               | `src/relay/nordvpn/nordvpn.ts`         | Fetches from `api.nordvpn.com`, HTTP proxy protocol                                      |
-| TOR relay source                 | `src/relay/tor/tor-relay.ts`           | `createTorRelay()`, `checkTorAvailable()` TCP probe                                      |
-| Relay source contracts           | `src/relay/relay-types.ts`             | `RelaySource` union type: `"mullvad"`, `"tor"`, `"nordvpn"`                              |
-| Runtime option parsing           | `src/runtime/runtime-options.ts`       | `--port`, `--socks5-port`, `--proxy-auth`, `--tor`, `--mullvad`, `--nordvpn`, `--no-tui` |
-| Startup orchestration            | `src/runtime/startup.ts`               | Config resolution, source loading, error reporting                                       |
-| Request stats tracking           | `src/stats.ts`                         | Per-relay request/failure counts, active connections                                     |
-| Canonical test behavior          | `test/*.test.ts`                       | Bun tests + integration-style proxy checks                                               |
+| Task                         | Location                               | Notes                                                                                    |
+| ---------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Boot + shutdown + TUI gate   | `index.ts`                             | TUI check, multi-source loading, server boot, SIGINT/SIGTERM                             |
+| Interactive TUI              | `src/tui/tui.ts`                       | @inquirer/prompts: source select, logging, ports, auth                                   |
+| Route handling + API surface | `src/server/routes.ts`                 | `/relays`, `/rotate`, `/relays/refresh`, `/health`, `/stats`                             |
+| HTTP server setup + wiring   | `src/server/server.ts`                 | Server creation, selector/state binding, calls `routeRequest`                            |
+| Sticky session management    | `src/server/sticky-session-manager.ts` | `X-Proxy-Session` pinning with TTL, relay rebinding on unhealthy                         |
+| HTTP proxy forwarding        | `src/proxy/http-proxy.ts`              | Absolute `http://`/`ws://` proxy, sticky session wiring, retry deps creation             |
+| CONNECT + WebSocket tunnels  | `src/proxy/tunnel-handlers.ts`         | CONNECT authority parse, WebSocket upgrade, bidirectional piping via relay retry         |
+| HTTP upstream (NordVPN TLS)  | `src/proxy/http-upstream.ts`           | CONNECT via TLS, HTTP request formatting, proxy auth header                              |
+| Shared socket utilities      | `src/proxy/socket-utils.ts`            | `readUntilHeaderEnd`, `waitForSocketDrain`, `onceSocketClosed`, `readExact`              |
+| SOCKS5 client handshake      | `src/proxy/socks5.ts`                  | Connect framing + socket prewarm cache                                                   |
+| SOCKS5 server listener       | `src/proxy/socks5-server.ts`           | Accepts SOCKS5 clients, protocol-aware relay dispatch                                    |
+| Relay selection strategy     | `src/relay/relay-selector.ts`          | Filters, sort modes, round-robin/random cycle, unhealthy backoff                         |
+| Mullvad API loader           | `src/relay/mullvad/mullvad-api.ts`     | Fetches from `api.mullvad.net`, maps to `RelayRecord`                                    |
+| NordVPN API loader           | `src/relay/nordvpn/nordvpn.ts`         | Fetches from `api.nordvpn.com`, HTTP proxy protocol                                      |
+| TOR relay source             | `src/relay/tor/tor-relay.ts`           | `createTorRelay()`, `checkTorAvailable()` TCP probe                                      |
+| Relay source contracts       | `src/relay/relay-types.ts`             | `RelaySource` union type: `"mullvad"`, `"tor"`, `"nordvpn"`                              |
+| Runtime option parsing       | `src/runtime/runtime-options.ts`       | `--port`, `--socks5-port`, `--proxy-auth`, `--tor`, `--mullvad`, `--nordvpn`, `--no-tui` |
+| Startup orchestration        | `src/runtime/startup.ts`               | Config resolution, source loading, error reporting                                       |
+| Request stats tracking       | `src/stats.ts`                         | Per-relay request/failure counts, active connections                                     |
+| Canonical test behavior      | `test/*.test.ts`                       | Bun tests + integration-style proxy checks                                               |
 
 ## CODE MAP
 
-| Symbol                       | Type     | Location                               | Refs   | Role                                                         |
-| ---------------------------- | -------- | -------------------------------------- | ------ | ------------------------------------------------------------ |
-| `createServer`               | function | `src/server/server.ts`                 | 9      | HTTP server entry, route dispatch, proxy auth                |
-| `createStickySessionManager` | function | `src/server/sticky-session-manager.ts` | 1      | Session-keyed relay pinning with inactivity TTL              |
-| `handleHttpProxyRequest`     | function | `src/proxy/http-proxy.ts`              | 3      | Absolute `http://` proxy forwarding (SOCKS5 + HTTP upstream) |
-| `handleConnectTunnel`        | function | `src/proxy/http-proxy.ts`              | 3      | `CONNECT` tunnel handling (SOCKS5 + HTTP upstream)           |
-| `handleWebSocketUpgrade`     | function | `src/proxy/http-proxy.ts`              | low    | WebSocket upgrade proxying through relays                    |
-| `connectViaSocks5`           | function | `src/proxy/socks5.ts`                  | medium | SOCKS5 handshake + connect                                   |
-| `connectViaHttpProxy`        | function | `src/proxy/http-upstream.ts`           | medium | TLS CONNECT tunnel via HTTP proxy                            |
-| `readUntilHeaderEnd`         | function | `src/proxy/socket-utils.ts`            | medium | Shared header reader with size/time limits                   |
-| `createSocks5Server`         | function | `src/proxy/socks5-server.ts`           | low    | SOCKS5 server listener                                       |
-| `createRelaySelector`        | function | `src/relay/relay-selector.ts`          | 9      | Rotation/filter state machine with excludeCountry            |
-| `createStatsTracker`         | function | `src/stats.ts`                         | low    | Per-relay request/failure counters                           |
-| `loadRelaysFromMullvadApi`   | function | `src/relay/mullvad/mullvad-api.ts`     | medium | Fetches Mullvad relays from API                              |
-| `loadNordvpnRelays`          | function | `src/relay/nordvpn/nordvpn.ts`         | medium | Fetches NordVPN servers, returns relays + warnings           |
-| `createTorRelay`             | function | `src/relay/tor/tor-relay.ts`           | low    | TOR synthetic relay record                                   |
-| `checkTorAvailable`          | function | `src/relay/tor/tor-relay.ts`           | low    | TCP probe to TOR SOCKS5 port                                 |
-| `runTui`                     | function | `src/tui/tui.ts`                       | medium | Interactive setup via @inquirer/prompts                      |
-| `shouldShowTui`              | function | `src/tui/tui.ts`                       | low    | Detect TUI mode from argv/TTY                                |
-| `parseRuntimeOptions`        | function | `src/runtime/runtime-options.ts`       | low    | Port, socks5-port, proxy-auth, logging, source, tui flags    |
+| Symbol                       | Type     | Location                               | Refs   | Role                                                                 |
+| ---------------------------- | -------- | -------------------------------------- | ------ | -------------------------------------------------------------------- |
+| `createServer`               | function | `src/server/server.ts`                 | 9      | HTTP server creation, selector/state binding                         |
+| `routeRequest`               | function | `src/server/routes.ts`                 | 1      | API route dispatch, proxy auth, JSON responses                       |
+| `createStickySessionManager` | function | `src/server/sticky-session-manager.ts` | 1      | Session-keyed relay pinning with inactivity TTL                      |
+| `handleHttpProxyRequest`     | function | `src/proxy/http-proxy.ts`              | 3      | Absolute `http://`/`ws://` proxy forwarding (SOCKS5 + HTTP upstream) |
+| `handleConnectTunnel`        | function | `src/proxy/tunnel-handlers.ts`         | 3      | `CONNECT` tunnel handling (SOCKS5 + HTTP upstream)                   |
+| `handleWebSocketUpgrade`     | function | `src/proxy/tunnel-handlers.ts`         | low    | WebSocket upgrade proxying through relays                            |
+| `connectViaSocks5`           | function | `src/proxy/socks5.ts`                  | medium | SOCKS5 handshake + connect                                           |
+| `connectViaHttpProxy`        | function | `src/proxy/http-upstream.ts`           | medium | TLS CONNECT tunnel via HTTP proxy                                    |
+| `readUntilHeaderEnd`         | function | `src/proxy/socket-utils.ts`            | medium | Shared header reader with size/time limits                           |
+| `readExact`                  | function | `src/proxy/socket-utils.ts`            | medium | Exact byte-count reader for SOCKS5 framing                           |
+| `createSocks5Server`         | function | `src/proxy/socks5-server.ts`           | low    | SOCKS5 server listener                                               |
+| `createRelaySelector`        | function | `src/relay/relay-selector.ts`          | 9      | Rotation/filter state machine with excludeCountry                    |
+| `createStatsTracker`         | function | `src/stats.ts`                         | low    | Per-relay request/failure counters                                   |
+| `tryRelays`                  | function | `src/proxy/relay-retry.ts`             | 3      | Relay failover loop: marks unhealthy, tries next candidate           |
+| `loadRelaysFromMullvadApi`   | function | `src/relay/mullvad/mullvad-api.ts`     | medium | Fetches Mullvad relays from API                                      |
+| `loadNordvpnRelays`          | function | `src/relay/nordvpn/nordvpn.ts`         | medium | Fetches NordVPN servers, returns relays + warnings                   |
+| `createTorRelay`             | function | `src/relay/tor/tor-relay.ts`           | low    | TOR synthetic relay record                                           |
+| `checkTorAvailable`          | function | `src/relay/tor/tor-relay.ts`           | low    | TCP probe to TOR SOCKS5 port                                         |
+| `runTui`                     | function | `src/tui/tui.ts`                       | medium | Interactive setup via @inquirer/prompts                              |
+| `shouldShowTui`              | function | `src/tui/tui.ts`                       | low    | Detect TUI mode from argv/TTY                                        |
+| `parseRuntimeOptions`        | function | `src/runtime/runtime-options.ts`       | low    | Port, socks5-port, proxy-auth, logging, source, tui flags            |
 
 ## RELAY SOURCE MODEL
 
@@ -150,9 +157,10 @@ bun run start -- --nordvpn            # NordVPN only, skip TUI (needs NORDVPN_US
 bun run start -- --tor                # TOR only, skip TUI
 NORDVPN_USERNAME=u NORDVPN_PASSWORD=p bun run start -- --mullvad --nordvpn
 bun test
-bunx tsc --noEmit
+bun run typecheck
 bun run biome-lint
 bun run biome-format
+bun run knip
 ```
 
 ## NOTES

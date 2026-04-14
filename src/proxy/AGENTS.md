@@ -13,20 +13,21 @@
 
 ## KEY FILES
 
-| Task                       | File                         | Notes                                                               |
-| -------------------------- | ---------------------------- | ------------------------------------------------------------------- |
-| HTTP proxy forwarding      | `src/proxy/http-proxy.ts`    | Absolute `http://` URL validation, request rewrite, relay retry     |
-| CONNECT tunnel behavior    | `src/proxy/http-proxy.ts`    | CONNECT authority parse + bidirectional socket piping               |
-| WebSocket upgrade proxying | `src/proxy/http-proxy.ts`    | `ws://` URL proxying + native upgrade event handling                |
-| HTTP proxy upstream (TLS)  | `src/proxy/http-upstream.ts` | CONNECT via TLS, HTTP request formatting, proxy auth header         |
-| Shared socket utilities    | `src/proxy/socket-utils.ts`  | `readUntilHeaderEnd`, `waitForSocketDrain`, `onceSocketClosed`      |
-| SOCKS5 client handshake    | `src/proxy/socks5.ts`        | Greeting, connect request framing, status validation, prewarm cache |
-| SOCKS5 server listener     | `src/proxy/socks5-server.ts` | Accepts SOCKS5 clients, routes through relays (protocol-aware)      |
+| Task                       | File                           | Notes                                                                       |
+| -------------------------- | ------------------------------ | --------------------------------------------------------------------------- |
+| HTTP proxy forwarding      | `src/proxy/http-proxy.ts`      | Absolute `http://`/`ws://` URL validation, request rewrite, sticky session  |
+| CONNECT tunnel behavior    | `src/proxy/tunnel-handlers.ts` | CONNECT authority parse + bidirectional socket piping via relay retry       |
+| WebSocket upgrade proxying | `src/proxy/tunnel-handlers.ts` | `ws://` URL proxying + upgrade event handling via relay retry               |
+| HTTP proxy upstream (TLS)  | `src/proxy/http-upstream.ts`   | CONNECT via TLS, HTTP request formatting, proxy auth header                 |
+| Shared socket utilities    | `src/proxy/socket-utils.ts`    | `readUntilHeaderEnd`, `waitForSocketDrain`, `onceSocketClosed`, `readExact` |
+| SOCKS5 client handshake    | `src/proxy/socks5.ts`          | Greeting, connect request framing, status validation, prewarm cache         |
+| SOCKS5 server listener     | `src/proxy/socks5-server.ts`   | Accepts SOCKS5 clients, routes through relays (protocol-aware)              |
+| Relay retry loop           | `src/proxy/relay-retry.ts`     | `tryRelays` — iterates relays with unhealthy marking on failure             |
 
 ## LOCAL INVARIANTS
 
-- `handleHttpProxyRequest` must reject non-absolute/non-HTTP proxy URLs with `400` JSON (accepts `http://` and `ws://`).
-- `handleWebSocketUpgrade` uses the same `tryRelays` relay retry path as HTTP and CONNECT.
+- `handleHttpProxyRequest` (in `http-proxy.ts`) must reject non-absolute/non-HTTP proxy URLs with `400` JSON (accepts `http://` and `ws://`).
+- `handleWebSocketUpgrade` and `handleConnectTunnel` (in `tunnel-handlers.ts`) use the same `tryRelays` relay retry path as HTTP.
 - `tryRelays` must mark failed relays unhealthy before moving to the next candidate.
 - Header read limits/timeouts (in `socket-utils.ts`) are safety guards, not optional behavior.
 - CONNECT authority parsing must validate host + integer port in `1..65535`.
@@ -43,9 +44,10 @@
 
 - Run: `bun test test/http-proxy.test.ts`
 - Then run: `bun test`
-- Keep `bunx tsc --noEmit` clean after transport-layer edits.
+- Keep `bun run typecheck` clean after transport-layer edits.
 
 ## RELATED PATHS
 
 - `src/server/server.ts` (entrypoints that call proxy handlers)
+- `src/proxy/tunnel-handlers.ts` (CONNECT + WebSocket tunnel handling)
 - `src/relay/relay-selector.ts` (relay selection + unhealthy backoff)

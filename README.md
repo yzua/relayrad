@@ -97,7 +97,7 @@ curl -X POST http://127.0.0.1:4123/rotate \
 
 | Flag                     | Default | Description                         |
 | ------------------------ | ------- | ----------------------------------- |
-| `--mullvad`              | auto    | Mullvad source                      |
+| `--mullvad`              | off     | Mullvad source                      |
 | `--tor`                  | off     | TOR source                          |
 | `--nordvpn`              | off     | NordVPN source                      |
 | `--port`, `-p`           | `4123`  | HTTP proxy port                     |
@@ -147,7 +147,7 @@ TOR relay has `provider: "tor-project"`, `ownership: "owned"`.
 
 ## How it works
 
-- Failed relays are marked unhealthy and skipped for 30s
+- Failed relays are marked unhealthy and skipped for 30s (configurable via `unhealthyBackoffMs`)
 - `X-Proxy-Session` keeps related HTTP, CONNECT, and WebSocket requests on one relay for 5 minutes of inactivity
 - TOR sticky sessions reuse one SOCKS auth identity per `X-Proxy-Session`; exit IP stability depends on local TOR isolation config
 - `POST /rotate` changes behavior without restart
@@ -161,6 +161,8 @@ TOR relay has `provider: "tor-project"`, `ownership: "owned"`.
 ```bash
 bun install
 bun run biome-lint
-bunx tsc --noEmit
+bun run biome-format
+bun run typecheck
+bun run knip
 bun test
 ```

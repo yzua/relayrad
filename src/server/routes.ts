@@ -1,8 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { handleHttpProxyRequest, type ProxyRuntime } from "../proxy/http-proxy";
+import { handleHttpProxyRequest } from "../proxy/http-proxy";
+import type { ProxyRuntime } from "../proxy/relay-retry";
 import type { ResolvedRelaySelectionConfig } from "../relay/relay-selector";
 import type { RelayRecord, RelaySelectionConfig } from "../relay/relay-types";
 import type { StatsTracker } from "../stats";
+import { checkProxyAuthRaw, sendProxyAuthRequired } from "./proxy-auth";
 import {
   readJsonBody,
   sanitizeSelectionConfig,
@@ -114,36 +116,12 @@ export function sendJson(
   res.end(body);
 }
 
-export function checkProxyAuthRaw(
-  header: string | undefined,
-  expected: { username: string; password: string },
-): boolean {
-  if (!header || !header.startsWith("Basic ")) {
-    return false;
-  }
-
-  const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
-  const separator = decoded.indexOf(":");
-  if (separator === -1) {
-    return false;
-  }
-
-  return (
-    decoded.slice(0, separator) === expected.username &&
-    decoded.slice(separator + 1) === expected.password
-  );
-}
-
-export function sendProxyAuthRequired(res: ServerResponse): void {
-  res.writeHead(407, {
-    "proxy-authenticate": 'Basic realm="relayrad"',
-    "content-type": "application/json",
-  });
-  res.end(JSON.stringify({ error: "Proxy authentication required" }));
-}
-
 function isProxyRequest(url: string): boolean {
-  return /^(http|ws):\/\//i.test(url);
+  const c = url.charCodeAt(0) | 0x20;
+  return (
+    (c === 0x68 && url.startsWith("http://")) ||
+    (c === 0x77 && url.startsWith("ws://"))
+  );
 }
 
 function parseRequestUrl(

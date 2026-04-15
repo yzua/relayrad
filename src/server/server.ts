@@ -1,10 +1,14 @@
-import { createServer as createNodeServer } from "node:http";
+import {
+  createServer as createNodeServer,
+  type IncomingMessage,
+} from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import type { ProxyRequestLogger } from "../logging/proxy-request-logger";
 import {
   type ProxyRuntime,
   parseStickySessionHeader,
-} from "../proxy/http-proxy";
+} from "../proxy/relay-retry";
+import { sendSocketError } from "../proxy/socket-utils";
 import {
   handleConnectTunnel,
   handleWebSocketUpgrade,
@@ -13,12 +17,8 @@ import { createRelaySelector } from "../relay/relay-selector";
 import type { RelayRecord, RelaySelectionConfig } from "../relay/relay-types";
 import type { StatsTracker } from "../stats";
 import { defaultSelectionConfig } from "./config";
-import {
-  checkProxyAuthRaw,
-  type RouteDeps,
-  routeRequest,
-  sendJson,
-} from "./routes";
+import { checkProxyAuthRaw } from "./proxy-auth";
+import { type RouteDeps, routeRequest, sendJson } from "./routes";
 import { InvalidJsonBodyError } from "./selection-config";
 import { createStickySessionManager } from "./sticky-session-manager";
 
@@ -40,13 +40,17 @@ export interface ProxyServer {
 
 export function createServer(deps: ProxyServerDeps): ProxyServer {
   let relays = [...deps.initialRelays];
+  let relayByHostname = new Map<string, RelayRecord>(
+    relays.map((r) => [r.hostname, r]),
+  );
   const selector = createRelaySelector(relays, defaultSelectionConfig);
   const relayListCache = new Map<string, RelayRecord[]>();
   const stickySessions = createStickySessionManager(STICKY_SESSION_TTL_MS);
 
   const runtime: ProxyRuntime = {
     pickRelay: () => selector.next(),
-    pickStickyRelay: (sessionKey) => stickySessions.get(sessionKey, relays),
+    pickStickyRelay: (sessionKey) =>
+      stickySessions.get(sessionKey, relayByHostname),
     rememberStickyRelay: (sessionKey, relayHostname) =>
       stickySessions.set(sessionKey, relayHostname),
     clearStickyRelay: (sessionKey) => stickySessions.delete(sessionKey),
@@ -82,6 +86,7 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
     },
     refresh: async () => {
       relays = await deps.refreshRelays();
+      relayByHostname = new Map(relays.map((r) => [r.hostname, r]));
       selector.update(relays);
       relayListCache.clear();
       return relays;
@@ -105,48 +110,62 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
     }
   });
 
-  server.on("connect", (req, clientSocket, head) => {
+  function handleSocketEvent(
+    req: IncomingMessage,
+    socket: Socket,
+    action: () => Promise<void>,
+    errorLabel: string,
+  ): void {
     if (
       deps.proxyAuth &&
       !checkProxyAuthRaw(req.headers["proxy-authorization"], deps.proxyAuth)
     ) {
-      rejectProxyAuth(clientSocket as Socket);
+      sendSocketError(
+        socket,
+        407,
+        "Proxy Authentication Required",
+        "Proxy authentication required",
+      );
       return;
     }
 
-    void handleConnectTunnel(
-      req.url,
-      clientSocket as Socket,
-      head,
-      runtime,
-      parseStickySessionHeader(req.headers["x-proxy-session"]),
-    ).catch((error) => {
+    void action().catch((error) => {
       const body =
-        error instanceof Error ? error.message : "CONNECT tunnel failed";
-      sendSocketError(clientSocket as Socket, 502, "Bad Gateway", body);
+        error instanceof Error ? error.message : `${errorLabel} failed`;
+      sendSocketError(socket, 502, "Bad Gateway", body);
     });
+  }
+
+  server.on("connect", (req, clientSocket, head) => {
+    handleSocketEvent(
+      req,
+      clientSocket as Socket,
+      () =>
+        handleConnectTunnel(
+          req.url,
+          clientSocket as Socket,
+          head,
+          runtime,
+          parseStickySessionHeader(req.headers["x-proxy-session"]),
+        ),
+      "CONNECT tunnel",
+    );
   });
 
   server.on("upgrade", (req, clientSocket, head) => {
-    if (
-      deps.proxyAuth &&
-      !checkProxyAuthRaw(req.headers["proxy-authorization"], deps.proxyAuth)
-    ) {
-      rejectProxyAuth(clientSocket as Socket);
-      return;
-    }
-
-    void handleWebSocketUpgrade(
+    handleSocketEvent(
       req,
       clientSocket as Socket,
-      head,
-      runtime,
-      parseStickySessionHeader(req.headers["x-proxy-session"]),
-    ).catch((error) => {
-      const body =
-        error instanceof Error ? error.message : "WebSocket upgrade failed";
-      sendSocketError(clientSocket as Socket, 502, "Bad Gateway", body);
-    });
+      () =>
+        handleWebSocketUpgrade(
+          req,
+          clientSocket as Socket,
+          head,
+          runtime,
+          parseStickySessionHeader(req.headers["x-proxy-session"]),
+        ),
+      "WebSocket upgrade",
+    );
   });
 
   return {
@@ -183,26 +202,7 @@ function relayFilterCacheKey(filters: RelaySelectionConfig): string {
     hostname: filters.hostname ?? "",
     provider: filters.provider ?? "",
     ownership: filters.ownership ?? "",
-    excludeCountry: filters.excludeCountry ?? "",
+    excludeCountry: filters.excludeCountry ?? [],
     sort: filters.sort ?? "",
   });
-}
-
-function rejectProxyAuth(socket: Socket): void {
-  socket.write(
-    'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="relayrad"\r\n\r\n',
-  );
-  socket.destroy();
-}
-
-function sendSocketError(
-  socket: Socket,
-  statusCode: number,
-  statusText: string,
-  body: string,
-): void {
-  socket.write(
-    `HTTP/1.1 ${statusCode} ${statusText}\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
-  );
-  socket.destroy();
 }

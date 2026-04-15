@@ -8,7 +8,7 @@ interface StickySessionEntry {
 export interface StickySessionManager {
   get(
     sessionKey: string,
-    relays: RelayRecord[],
+    relayByHostname: Map<string, RelayRecord>,
     now?: number,
   ): RelayRecord | undefined;
   set(sessionKey: string, relayHostname: string, now?: number): void;
@@ -21,7 +21,7 @@ export function createStickySessionManager(
   const sessions = new Map<string, StickySessionEntry>();
 
   return {
-    get(sessionKey, relays, now = Date.now()) {
+    get(sessionKey, relayByHostname, now = Date.now()) {
       const entry = sessions.get(sessionKey);
       if (!entry) {
         return undefined;
@@ -32,9 +32,7 @@ export function createStickySessionManager(
         return undefined;
       }
 
-      const relay = relays.find(
-        (candidate) => candidate.hostname === entry.relayHostname,
-      );
+      const relay = relayByHostname.get(entry.relayHostname);
       if (!relay) {
         sessions.delete(sessionKey);
         return undefined;

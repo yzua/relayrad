@@ -18,6 +18,7 @@ export interface ResolvedRelaySelectionConfig
   ownership?: RelayOwnership | undefined;
   unhealthyBackoffMs: number;
   excludeCountry: string[];
+  excludeCountrySet: Set<string> | null;
   sort: RelaySort;
 }
 
@@ -61,14 +62,16 @@ export function createRelaySelector(
   let generation = 0;
   let randomGeneration = -1;
 
-  // Cached relay lists — invalidated on update(), reused across next()/list() calls.
-  // Unhealthy filtering happens at selection time, so markUnhealthy() does NOT invalidate these.
+  // Structural caches — invalidated only on update() since relay membership doesn't
+  // change when a relay is marked unhealthy.
   let matchedCache: RelayRecord[] | null = null;
   let sortedCache: RelayRecord[] | null = null;
+  let groupedBySourceCache: Map<string, RelayRecord[]> | null = null;
 
-  function invalidateCache(): void {
+  function invalidateStructuralCache(): void {
     matchedCache = null;
     sortedCache = null;
+    groupedBySourceCache = null;
   }
 
   function getMatched(): RelayRecord[] {
@@ -83,8 +86,14 @@ export function createRelaySelector(
     return sortedCache;
   }
 
+  function getGroupedBySource(): Map<string, RelayRecord[]> {
+    if (groupedBySourceCache) return groupedBySourceCache;
+    groupedBySourceCache = groupRelaysBySource(getMatched());
+    return groupedBySourceCache;
+  }
+
   // Build initial cache
-  invalidateCache();
+  invalidateStructuralCache();
 
   const list = (now = Date.now()): RelayRecord[] => {
     if (config.sort === "random") {
@@ -123,7 +132,6 @@ export function createRelaySelector(
     markUnhealthy(hostname: string, now = Date.now()) {
       unhealthyUntil.set(hostname, now + config.unhealthyBackoffMs);
       generation++;
-      // No cache invalidation — unhealthy check happens at selection time.
     },
     update(nextRelays: RelayRecord[], nextConfig: RelaySelectionConfig = {}) {
       relays = nextRelays.map(normalizeRelay);
@@ -134,7 +142,7 @@ export function createRelaySelector(
       generation++;
       randomSourceRelayCycles = new Map();
       randomSourceRelayCursors = new Map();
-      invalidateCache();
+      invalidateStructuralCache();
     },
     getConfig() {
       return config;
@@ -147,10 +155,26 @@ export function createRelaySelector(
     return matched.filter((r) => !isUnhealthy(r.hostname, now, unhealthyUntil));
   }
 
-  function nextRandomRelay(candidates: RelayRecord[]): RelayRecord | undefined {
-    const candidatesBySource = groupRelaysBySource(candidates);
+  function nextRandomRelay(
+    healthyCandidates: RelayRecord[],
+  ): RelayRecord | undefined {
+    let candidatesBySource = getGroupedBySource();
+    // Filter out unhealthy from each source's relay list (copy to avoid mutating cache)
+    if (unhealthyUntil.size > 0) {
+      const now = Date.now();
+      candidatesBySource = new Map();
+      for (const [source, sourceRelays] of getGroupedBySource()) {
+        const filtered = sourceRelays.filter(
+          (r) => !isUnhealthy(r.hostname, now, unhealthyUntil),
+        );
+        if (filtered.length > 0) {
+          candidatesBySource.set(source, filtered);
+        }
+      }
+    }
+
     if (candidatesBySource.size === 1) {
-      return nextSingleSourceRandomRelay(candidates);
+      return nextSingleSourceRandomRelay(healthyCandidates);
     }
 
     if (
@@ -196,9 +220,9 @@ export function createRelaySelector(
   }
 
   function nextSingleSourceRandomRelay(
-    candidates: RelayRecord[],
+    healthyCandidates: RelayRecord[],
   ): RelayRecord | undefined {
-    const source = candidates[0]?.source;
+    const source = healthyCandidates[0]?.source;
     if (!source) {
       return undefined;
     }
@@ -213,7 +237,7 @@ export function createRelaySelector(
     ) {
       randomGeneration = generation;
       randomSourceRelayCycles = new Map([
-        [source, shuffleValues([...candidates])],
+        [source, shuffleValues([...healthyCandidates])],
       ]);
       randomSourceRelayCursors = new Map([[source, 0]]);
     }
@@ -229,16 +253,22 @@ export function createRelaySelector(
 function normalizeConfig(
   config: RelaySelectionConfig,
 ): ResolvedRelaySelectionConfig {
-  return {
+  const excludeCountry = config.excludeCountry ?? [];
+  const result: ResolvedRelaySelectionConfig = {
     country: config.country?.trim().toLowerCase() ?? "",
     city: config.city?.trim().toLowerCase() ?? "",
     hostname: config.hostname?.trim().toLowerCase() ?? "",
     provider: config.provider?.trim().toLowerCase() ?? "",
     ownership: config.ownership,
-    excludeCountry: config.excludeCountry ?? [],
+    excludeCountry,
+    excludeCountrySet:
+      excludeCountry.length > 0 ? new Set(excludeCountry) : null,
     sort: config.sort ?? "hostname",
     unhealthyBackoffMs: config.unhealthyBackoffMs ?? 30_000,
   };
+  // Make excludeCountrySet non-enumerable so JSON.stringify skips it
+  Object.defineProperty(result, "excludeCountrySet", { enumerable: false });
+  return result;
 }
 
 function matches(
@@ -256,12 +286,9 @@ function matches(
   }
 
   if (
-    config.excludeCountry &&
-    config.excludeCountry.length > 0 &&
-    config.excludeCountry.some(
-      (excluded) =>
-        nr._countryCodeLower === excluded || nr._countryNameLower === excluded,
-    )
+    config.excludeCountrySet &&
+    (config.excludeCountrySet.has(nr._countryCodeLower) ||
+      config.excludeCountrySet.has(nr._countryNameLower))
   ) {
     return false;
   }

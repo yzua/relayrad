@@ -26,16 +26,20 @@ src/
 
 ## WHERE TO LOOK
 
-| Task                              | File                                   | Notes                                                                      |
-| --------------------------------- | -------------------------------------- | -------------------------------------------------------------------------- |
-| Add/adjust API route behavior     | `src/server/routes.ts`                 | Keep `routeRequest` branch style and JSON response helpers                 |
-| Change sticky session behavior    | `src/server/sticky-session-manager.ts` | Session-keyed relay pinning with inactivity TTL                            |
-| Change proxy request dispatch     | `src/proxy/AGENTS.md`                  | Child doc covers transport-specific invariants                             |
-| Change relay selection            | `src/relay/AGENTS.md`                  | Child doc covers selector invariants                                       |
-| Change runtime flags/env behavior | `src/runtime/runtime-options.ts`       | Preserve `--port` / `-p` precedence over env                               |
-| Change logging behavior           | `src/logging/proxy-request-logger.ts`  | Console + SQLite backends, composite logger                                |
-| Change TUI prompts/flow           | `src/tui/tui.ts`                       | @inquirer/prompts, TUI detection logic                                     |
-| Add new relay source              | `src/relay/<source>/`                  | Create directory + module, add `RelaySource` variant, wire in `startup.ts` |
+| Task                                | File                                   | Notes                                                                      |
+| ----------------------------------- | -------------------------------------- | -------------------------------------------------------------------------- |
+| Add/adjust API route behavior       | `src/server/routes.ts`                 | Keep `routeRequest` branch style and JSON response helpers                 |
+| Change default selection config     | `src/server/config.ts`                 | Live server defaults (`sort: "random"`, `unhealthyBackoffMs: 30000`)       |
+| Change proxy auth behavior          | `src/server/proxy-auth.ts`             | Basic auth parsing + `407` response                                        |
+| Change sticky session behavior      | `src/server/sticky-session-manager.ts` | Session-keyed relay pinning with inactivity TTL                            |
+| Change protocol-aware relay connect | `src/proxy/connect-via-relay.ts`       | Dispatches to SOCKS5 or HTTP upstream based on `relay.protocol`            |
+| Change proxy request dispatch       | `src/proxy/AGENTS.md`                  | Child doc covers transport-specific invariants                             |
+| Change relay selection              | `src/relay/AGENTS.md`                  | Child doc covers selector invariants                                       |
+| Change runtime flags/env behavior   | `src/runtime/runtime-options.ts`       | Preserve `--port` / `-p` precedence over env                               |
+| Change port/auth validation         | `src/runtime/runtime-validation.ts`    | `parsePortValue`, `parseProxyAuthValue`, TUI validators                    |
+| Change logging behavior             | `src/logging/proxy-request-logger.ts`  | Console + SQLite backends, composite logger                                |
+| Change TUI prompts/flow             | `src/tui/tui.ts`                       | @inquirer/prompts, TUI detection logic                                     |
+| Add new relay source                | `src/relay/<source>/`                  | Create directory + module, add `RelaySource` variant, wire in `startup.ts` |
 
 ## CONVENTIONS
 

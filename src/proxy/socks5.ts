@@ -1,18 +1,10 @@
 import { createHash } from "node:crypto";
 import { connect as connectTcp, type Socket } from "node:net";
 import type { RelayRecord } from "../relay/relay-types";
+import { prewarmRelaySocket, takePrewarmedSocket } from "./socket-prewarm";
 
-const PREWARM_SOCKET_IDLE_MS = 2_000;
-const SOCKS5_HANDSHAKE_TIMEOUT_MS = 5_000;
 const SOCKS5_CONNECT_TIMEOUT_MS = 30_000;
 const TCP_CONNECT_TIMEOUT_MS = 10_000;
-
-interface PrewarmedSocketEntry {
-  socket: Socket;
-  idleTimer: ReturnType<typeof setTimeout>;
-}
-
-const prewarmedSockets = new Map<string, PrewarmedSocketEntry>();
 
 export async function connectViaSocks5(
   relay: RelayRecord,
@@ -25,41 +17,58 @@ export async function connectViaSocks5(
   try {
     const auth = resolveSocks5Auth(relay, uniqueAuthKey);
     const hasAuth = auth !== undefined;
-    const methodRequest = hasAuth
-      ? Buffer.from([0x05, 0x01, 0x02])
-      : Buffer.from([0x05, 0x01, 0x00]);
-    const methodResponse = await writeAndExpect(
-      socket,
-      methodRequest,
-      2,
-      SOCKS5_HANDSHAKE_TIMEOUT_MS,
-    );
 
-    if (methodResponse[1] === 0x02 && hasAuth) {
-      await socks5Auth(
-        socket,
-        auth.username,
-        auth.password,
-        SOCKS5_HANDSHAKE_TIMEOUT_MS,
-      );
-    } else if (methodResponse[1] !== 0x00) {
-      throw new Error(
-        `SOCKS5 auth negotiation failed with method ${methodResponse[1]}`,
-      );
+    // Build all SOCKS5 handshake payloads upfront.
+    // Sending method + auth + connect in one TCP write collapses 3 round
+    // trips (method, auth, connect) into a single round trip.
+    const parts: Buffer[] = [
+      hasAuth
+        ? Buffer.from([0x05, 0x01, 0x02])
+        : Buffer.from([0x05, 0x01, 0x00]),
+    ];
+
+    if (hasAuth && auth) {
+      parts.push(buildSocks5AuthPayload(auth.username, auth.password));
     }
 
-    const request = buildSocks5ConnectRequest(targetHost, targetPort);
+    parts.push(buildSocks5ConnectRequest(targetHost, targetPort));
+
+    // With auth: method(2) + auth(2) + connect(10) = 14 bytes
+    // Without:   method(2) + connect(10) = 12 bytes
     const response = await writeAndExpect(
       socket,
-      request,
-      10,
+      Buffer.concat(parts),
+      hasAuth ? 14 : 12,
       SOCKS5_CONNECT_TIMEOUT_MS,
     );
 
-    if (response[1] !== 0x00) {
-      throw new Error(
-        `SOCKS5 connect failed with status ${response[1] ?? "unknown"}`,
-      );
+    // Parse the combined response
+    let offset = 0;
+    const methodStatus = response[1] ?? 0xff;
+
+    if (hasAuth) {
+      if (methodStatus !== 0x02) {
+        throw new Error(
+          `SOCKS5 auth negotiation failed with method ${methodStatus}`,
+        );
+      }
+      const authStatus = response[3] ?? 0x01;
+      if (authStatus !== 0x00) {
+        throw new Error("SOCKS5 username/password authentication rejected");
+      }
+      offset = 4;
+    } else {
+      if (methodStatus !== 0x00) {
+        throw new Error(
+          `SOCKS5 auth negotiation failed with method ${methodStatus}`,
+        );
+      }
+      offset = 2;
+    }
+
+    const connectStatus = response[offset + 1] ?? 0xff;
+    if (connectStatus !== 0x00) {
+      throw new Error(`SOCKS5 connect failed with status ${connectStatus}`);
     }
 
     return socket;
@@ -98,6 +107,22 @@ function hashUniqueAuthKey(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
+function buildSocks5AuthPayload(username: string, password: string): Buffer {
+  const userBuf = Buffer.from(username, "utf8");
+  const passBuf = Buffer.from(password, "utf8");
+
+  if (userBuf.length > 255 || passBuf.length > 255) {
+    throw new Error("SOCKS5 auth credentials too long (max 255 bytes each)");
+  }
+
+  return Buffer.concat([
+    Buffer.from([0x01, userBuf.length]),
+    userBuf,
+    Buffer.from([passBuf.length]),
+    passBuf,
+  ]);
+}
+
 function buildSocks5ConnectRequest(
   targetHost: string,
   targetPort: number,
@@ -134,8 +159,7 @@ function classifyHost(host: string): "ipv4" | "domain" {
 }
 
 function openSocket(host: string, port: number): Promise<Socket> {
-  const key = relaySocketKey(host, port);
-  const prewarmed = takePrewarmedSocket(key);
+  const prewarmed = takePrewarmedSocket(host, port);
   if (prewarmed) {
     prewarmRelaySocket(host, port);
     return Promise.resolve(prewarmed);
@@ -186,9 +210,15 @@ function writeAndExpect(
       reject(error);
     };
 
+    const onEnd = () => {
+      cleanup();
+      reject(new Error("SOCKS5 connection closed during handshake"));
+    };
+
     const cleanup = () => {
       socket.off("data", onData);
       socket.off("error", onError);
+      socket.off("end", onEnd);
       if (timer) {
         clearTimeout(timer);
         timer = undefined;
@@ -197,6 +227,7 @@ function writeAndExpect(
 
     socket.on("data", onData);
     socket.on("error", onError);
+    socket.on("end", onEnd);
     socket.write(payload);
 
     if (timeoutMs && timeoutMs > 0) {
@@ -206,95 +237,5 @@ function writeAndExpect(
       }, timeoutMs);
       timer.unref?.();
     }
-  });
-}
-
-async function socks5Auth(
-  socket: Socket,
-  username: string,
-  password: string,
-  timeoutMs?: number,
-): Promise<void> {
-  const userBuf = Buffer.from(username, "utf8");
-  const passBuf = Buffer.from(password, "utf8");
-
-  if (userBuf.length > 255 || passBuf.length > 255) {
-    throw new Error("SOCKS5 auth credentials too long (max 255 bytes each)");
-  }
-
-  const payload = Buffer.concat([
-    Buffer.from([0x01, userBuf.length]),
-    userBuf,
-    Buffer.from([passBuf.length]),
-    passBuf,
-  ]);
-
-  const response = await writeAndExpect(socket, payload, 2, timeoutMs);
-  if (response[1] !== 0x00) {
-    throw new Error("SOCKS5 username/password authentication rejected");
-  }
-}
-
-function relaySocketKey(host: string, port: number): string {
-  return `${host}:${port}`;
-}
-
-function takePrewarmedSocket(key: string): Socket | undefined {
-  const entry = prewarmedSockets.get(key);
-  if (!entry) {
-    return undefined;
-  }
-
-  prewarmedSockets.delete(key);
-  clearTimeout(entry.idleTimer);
-  const socket = entry.socket;
-  if (socket.destroyed || !socket.readable || !socket.writable) {
-    socket.destroy();
-    return undefined;
-  }
-
-  return socket;
-}
-
-function prewarmRelaySocket(host: string, port: number): void {
-  const key = relaySocketKey(host, port);
-  if (prewarmedSockets.has(key)) {
-    return;
-  }
-
-  const socket = connectTcp({ host, port });
-  socket.once("connect", () => {
-    if (socket.destroyed || !socket.readable || !socket.writable) {
-      socket.destroy();
-      return;
-    }
-
-    const existing = prewarmedSockets.get(key);
-    if (existing) {
-      clearTimeout(existing.idleTimer);
-      existing.socket.destroy();
-      socket.destroy();
-      return;
-    }
-
-    const cleanup = () => {
-      if (prewarmedSockets.get(key)?.socket === socket) {
-        prewarmedSockets.delete(key);
-      }
-    };
-
-    const idleTimer = setTimeout(() => {
-      cleanup();
-      socket.destroy();
-    }, PREWARM_SOCKET_IDLE_MS);
-    idleTimer.unref?.();
-
-    socket.once("close", cleanup);
-    socket.once("end", cleanup);
-    socket.once("error", cleanup);
-    prewarmedSockets.set(key, { socket, idleTimer });
-  });
-  socket.once("error", () => {
-    socket.destroy();
   });
 }

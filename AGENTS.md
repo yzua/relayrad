@@ -101,6 +101,9 @@ mullvader/
 | `createRelaySelector`        | function | `src/relay/relay-selector.ts`          | 9      | Rotation/filter state machine with excludeCountry                    |
 | `createStatsTracker`         | function | `src/stats.ts`                         | low    | Per-relay request/failure counters                                   |
 | `tryRelays`                  | function | `src/proxy/relay-retry.ts`             | 3      | Relay failover loop: marks unhealthy, tries next candidate           |
+| `ProxyRuntime`               | type     | `src/proxy/relay-retry.ts`             | ...    | Runtime context passed to proxy handlers                             |
+| `createRetryDeps`            | function | `src/proxy/relay-retry.ts`             | 3      | Builds retry deps with sticky session awareness                      |
+| `parseStickySessionHeader`   | function | `src/proxy/relay-retry.ts`             | low    | Parses X-Proxy-Session header value                                  |
 | `loadRelaysFromMullvadApi`   | function | `src/relay/mullvad/mullvad-api.ts`     | medium | Fetches Mullvad relays from API                                      |
 | `loadNordvpnRelays`          | function | `src/relay/nordvpn/nordvpn.ts`         | medium | Fetches NordVPN servers, returns relays + warnings                   |
 | `createTorRelay`             | function | `src/relay/tor/tor-relay.ts`           | low    | TOR synthetic relay record                                           |

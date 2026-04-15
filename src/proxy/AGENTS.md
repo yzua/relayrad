@@ -15,14 +15,14 @@
 
 | Task                       | File                           | Notes                                                                       |
 | -------------------------- | ------------------------------ | --------------------------------------------------------------------------- |
-| HTTP proxy forwarding      | `src/proxy/http-proxy.ts`      | Absolute `http://`/`ws://` URL validation, request rewrite, sticky session  |
+| HTTP proxy forwarding      | `src/proxy/http-proxy.ts`      | Absolute `http://`/`ws://` URL validation, request rewrite                  |
 | CONNECT tunnel behavior    | `src/proxy/tunnel-handlers.ts` | CONNECT authority parse + bidirectional socket piping via relay retry       |
 | WebSocket upgrade proxying | `src/proxy/tunnel-handlers.ts` | `ws://` URL proxying + upgrade event handling via relay retry               |
 | HTTP proxy upstream (TLS)  | `src/proxy/http-upstream.ts`   | CONNECT via TLS, HTTP request formatting, proxy auth header                 |
 | Shared socket utilities    | `src/proxy/socket-utils.ts`    | `readUntilHeaderEnd`, `waitForSocketDrain`, `onceSocketClosed`, `readExact` |
 | SOCKS5 client handshake    | `src/proxy/socks5.ts`          | Greeting, connect request framing, status validation, prewarm cache         |
 | SOCKS5 server listener     | `src/proxy/socks5-server.ts`   | Accepts SOCKS5 clients, routes through relays (protocol-aware)              |
-| Relay retry loop           | `src/proxy/relay-retry.ts`     | `tryRelays` — iterates relays with unhealthy marking on failure             |
+| Proxy runtime + retry      | `src/proxy/relay-retry.ts`     | `ProxyRuntime`, `tryRelays`, `createRetryDeps`, sticky session header parse |
 
 ## LOCAL INVARIANTS
 

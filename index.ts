@@ -1,5 +1,5 @@
 import { createProxyRequestLogger } from "./src/logging/proxy-request-logger";
-import type { ProxyRuntime } from "./src/proxy/http-proxy";
+import type { ProxyRuntimeBase } from "./src/proxy/relay-retry";
 import { createSocks5Server } from "./src/proxy/socks5-server";
 import { createRelaySelector } from "./src/relay/relay-selector";
 import type { RelayRecord } from "./src/relay/relay-types";
@@ -80,11 +80,8 @@ if (startupConfig.socks5Port) {
     unhealthyBackoffMs: 30_000,
   });
 
-  const socks5Runtime: ProxyRuntime = {
+  const socks5Runtime: ProxyRuntimeBase = {
     pickRelay: () => selector.next(),
-    pickStickyRelay: () => undefined,
-    rememberStickyRelay: () => {},
-    clearStickyRelay: () => {},
     markRelayUnhealthy: (hostname: string) => selector.markUnhealthy(hostname),
     requestLogger,
     statsTracker,

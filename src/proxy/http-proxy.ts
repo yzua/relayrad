@@ -1,31 +1,23 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
-import type { ProxyRequestLogger } from "../logging/proxy-request-logger";
 import { createLogEvent } from "../logging/proxy-request-logger";
 import type { RelayRecord } from "../relay/relay-types";
-import type { StatsTracker } from "../stats";
+import { connectViaRelay } from "./connect-via-relay";
 import {
   buildHttpProxyRequest,
   buildProxyAuthHeader,
   formatHttpHeaders,
   openHttpProxySocket,
 } from "./http-upstream";
-import type { RelayRetryDeps } from "./relay-retry";
-import { tryRelays } from "./relay-retry";
+import {
+  createRetryDeps,
+  type ProxyRuntime,
+  parseStickySessionHeader,
+  tryRelays,
+} from "./relay-retry";
 import { readUntilHeaderEnd, waitForSocketDrain } from "./socket-utils";
-import { connectViaSocks5 } from "./socks5";
 
 const UPSTREAM_HEADER_READ_TIMEOUT_MS = 10_000;
-
-export interface ProxyRuntime {
-  pickRelay: () => RelayRecord | undefined;
-  pickStickyRelay: (sessionKey: string) => RelayRecord | undefined;
-  rememberStickyRelay: (sessionKey: string, relayHostname: string) => void;
-  clearStickyRelay: (sessionKey: string) => void;
-  markRelayUnhealthy: (hostname: string) => void;
-  requestLogger: ProxyRequestLogger;
-  statsTracker: StatsTracker;
-}
 
 export async function handleHttpProxyRequest(
   clientRequest: IncomingMessage,
@@ -54,6 +46,17 @@ export async function handleHttpProxyRequest(
   headers.host = targetUrl.host;
   headers.connection = "close";
 
+  const logHttpRelay = (relay: RelayRecord) => {
+    runtime.requestLogger.log(
+      createLogEvent(
+        "http",
+        targetUrl.hostname,
+        Number(targetUrl.port || 80),
+        relay,
+      ),
+    );
+  };
+
   const lastError = await tryRelays(
     createRetryDeps(runtime, sessionKey),
     async (relay) => {
@@ -61,20 +64,20 @@ export async function handleHttpProxyRequest(
         await handleHttpViaHttpProxy(
           clientRequest,
           clientResponse,
-          runtime,
           relay,
           targetUrl,
           headers,
+          () => logHttpRelay(relay),
         );
       } else {
         await handleHttpViaSocks5(
           clientRequest,
           clientResponse,
-          runtime,
           relay,
           targetUrl,
           headers,
           sessionKey,
+          () => logHttpRelay(relay),
         );
       }
     },
@@ -89,93 +92,82 @@ export async function handleHttpProxyRequest(
 async function handleHttpViaSocks5(
   clientRequest: IncomingMessage,
   clientResponse: ServerResponse,
-  runtime: ProxyRuntime,
   relay: RelayRecord,
   targetUrl: URL,
   headers: Record<string, string | string[] | undefined>,
-  sessionKey?: string,
+  sessionKey: string | undefined,
+  onRelaySuccess: () => void,
 ): Promise<void> {
-  const upstreamSocket = await connectViaSocks5(
+  const upstreamSocket = await connectViaRelay(
     relay,
     targetUrl.hostname,
     Number(targetUrl.port || 80),
     sessionKey,
   );
 
-  await new Promise<void>((resolve, reject) => {
-    upstreamSocket.once("error", reject);
-    writeHttpRequest(
-      upstreamSocket,
-      clientRequest.method ?? "GET",
-      `${targetUrl.pathname}${targetUrl.search}`,
-      headers,
-    );
-    void forwardRequestBody(clientRequest, upstreamSocket).catch((error) => {
-      upstreamSocket.destroy();
-      reject(error);
-    });
+  writeHttpRequest(
+    upstreamSocket,
+    clientRequest.method ?? "GET",
+    `${targetUrl.pathname}${targetUrl.search}`,
+    headers,
+  );
 
-    relayHttpResponse(upstreamSocket, clientResponse, () => {
-      runtime.requestLogger.log(
-        createLogEvent(
-          "http",
-          targetUrl.hostname,
-          Number(targetUrl.port || 80),
-          relay,
-        ),
-      );
-    })
-      .then(resolve)
-      .catch((error) => {
-        upstreamSocket.destroy();
-        reject(error);
-      });
-  });
+  await relayHttpThroughUpstream(
+    upstreamSocket,
+    clientRequest,
+    clientResponse,
+    onRelaySuccess,
+  );
 }
 
 async function handleHttpViaHttpProxy(
   clientRequest: IncomingMessage,
   clientResponse: ServerResponse,
-  runtime: ProxyRuntime,
   relay: RelayRecord,
   targetUrl: URL,
   headers: Record<string, string | string[] | undefined>,
+  onRelaySuccess: () => void,
 ): Promise<void> {
   const upstreamSocket = await openHttpProxySocket(relay);
 
+  const authHeader = buildProxyAuthHeader(relay);
+  if (authHeader) {
+    headers["proxy-authorization"] = authHeader.replace(
+      "Proxy-Authorization: ",
+      "",
+    );
+  }
+
+  const requestText = buildHttpProxyRequest(
+    clientRequest.method ?? "GET",
+    targetUrl,
+    headers,
+  );
+  upstreamSocket.write(requestText);
+
+  await relayHttpThroughUpstream(
+    upstreamSocket,
+    clientRequest,
+    clientResponse,
+    onRelaySuccess,
+  );
+}
+
+async function relayHttpThroughUpstream(
+  upstreamSocket: Socket,
+  clientRequest: IncomingMessage,
+  clientResponse: ServerResponse,
+  onHeadersReady?: () => void,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     upstreamSocket.once("error", reject);
-
-    const authHeader = buildProxyAuthHeader(relay);
-    if (authHeader) {
-      headers["proxy-authorization"] = authHeader.replace(
-        "Proxy-Authorization: ",
-        "",
-      );
-    }
-
-    const requestText = buildHttpProxyRequest(
-      clientRequest.method ?? "GET",
-      targetUrl,
-      headers,
-    );
-    upstreamSocket.write(requestText);
 
     void forwardRequestBody(clientRequest, upstreamSocket).catch((error) => {
       upstreamSocket.destroy();
       reject(error);
     });
 
-    relayHttpResponse(upstreamSocket, clientResponse, () => {
-      runtime.requestLogger.log(
-        createLogEvent(
-          "http",
-          targetUrl.hostname,
-          Number(targetUrl.port || 80),
-          relay,
-        ),
-      );
-    })
+    relayHttpResponse(upstreamSocket, clientResponse, onHeadersReady)
       .then(resolve)
       .catch((error) => {
         upstreamSocket.destroy();
@@ -275,51 +267,4 @@ function parseProxyTarget(url: string | undefined): URL | undefined {
   } catch {
     return undefined;
   }
-}
-
-export function createRetryDeps(
-  runtime: ProxyRuntime,
-  sessionKey?: string,
-): RelayRetryDeps {
-  const stickyRelay = sessionKey
-    ? runtime.pickStickyRelay(sessionKey)
-    : undefined;
-  let stickyRelayAvailable = Boolean(stickyRelay);
-
-  const deps: RelayRetryDeps = {
-    pickRelay: () => {
-      if (stickyRelayAvailable) {
-        stickyRelayAvailable = false;
-        return stickyRelay;
-      }
-
-      return runtime.pickRelay();
-    },
-    markRelayUnhealthy: runtime.markRelayUnhealthy,
-    statsTracker: runtime.statsTracker,
-  };
-
-  if (sessionKey) {
-    deps.onRelaySuccess = (relay) => {
-      runtime.rememberStickyRelay(sessionKey, relay.hostname);
-    };
-    deps.onRelayFailure = (relay) => {
-      if (relay.hostname === stickyRelay?.hostname) {
-        runtime.clearStickyRelay(sessionKey);
-      }
-    };
-  }
-
-  return deps;
-}
-
-export function parseStickySessionHeader(
-  value: string | string[] | undefined,
-): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const sessionKey = value.trim();
-  return sessionKey ? sessionKey : undefined;
 }

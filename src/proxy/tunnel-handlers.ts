@@ -1,12 +1,10 @@
 import type { IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 import { createLogEvent } from "../logging/proxy-request-logger";
-import type { ProxyRuntime } from "./http-proxy";
-import { createRetryDeps } from "./http-proxy";
-import { connectViaHttpProxy, formatHttpHeaders } from "./http-upstream";
-import { tryRelays } from "./relay-retry";
-import { onceSocketClosed } from "./socket-utils";
-import { connectViaSocks5 } from "./socks5";
+import { connectViaRelay } from "./connect-via-relay";
+import { formatHttpHeaders } from "./http-upstream";
+import { createRetryDeps, type ProxyRuntime, tryRelays } from "./relay-retry";
+import { onceSocketClosed, sendSocketError } from "./socket-utils";
 
 export async function handleConnectTunnel(
   requestUrl: string | undefined,
@@ -22,46 +20,19 @@ export async function handleConnectTunnel(
     return;
   }
 
-  const lastError = await tryRelays(
-    createRetryDeps(runtime, sessionKey),
-    async (relay) => {
-      const connectPromise =
-        relay.protocol === "http"
-          ? connectViaHttpProxy(relay, destination.host, destination.port)
-          : connectViaSocks5(
-              relay,
-              destination.host,
-              destination.port,
-              sessionKey,
-            );
-
-      const upstreamSocket = await raceConnectOrClientClose(
-        connectPromise,
-        clientSocket,
-      );
-
-      runtime.requestLogger.log(
-        createLogEvent("connect", destination.host, destination.port, relay),
-      );
+  await tunnelThroughRelay(
+    clientSocket,
+    runtime,
+    sessionKey,
+    destination,
+    "connect",
+    (upstreamSocket) => {
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-
       if (head.length > 0) {
         upstreamSocket.write(head);
       }
-
-      clientSocket.pipe(upstreamSocket);
-      upstreamSocket.pipe(clientSocket);
-
-      await Promise.race([
-        onceSocketClosed(clientSocket),
-        onceSocketClosed(upstreamSocket),
-      ]);
     },
   );
-
-  if (lastError) {
-    sendTunnelError(clientSocket, lastError.message);
-  }
 }
 
 export async function handleWebSocketUpgrade(
@@ -78,13 +49,38 @@ export async function handleWebSocketUpgrade(
     return;
   }
 
+  await tunnelThroughRelay(
+    clientSocket,
+    runtime,
+    sessionKey,
+    target,
+    "upgrade",
+    (upstreamSocket) => {
+      writeWsUpgradeRequest(upstreamSocket, req, target);
+      if (head.length > 0) {
+        upstreamSocket.write(head);
+      }
+    },
+  );
+}
+
+async function tunnelThroughRelay(
+  clientSocket: Socket,
+  runtime: ProxyRuntime,
+  sessionKey: string | undefined,
+  target: { host: string; port: number },
+  logType: "connect" | "upgrade",
+  onConnected: (upstreamSocket: Socket) => void,
+): Promise<void> {
   const lastError = await tryRelays(
     createRetryDeps(runtime, sessionKey),
     async (relay) => {
-      const connectPromise =
-        relay.protocol === "http"
-          ? connectViaHttpProxy(relay, target.host, target.port)
-          : connectViaSocks5(relay, target.host, target.port, sessionKey);
+      const connectPromise = connectViaRelay(
+        relay,
+        target.host,
+        target.port,
+        sessionKey,
+      );
 
       const upstreamSocket = await raceConnectOrClientClose(
         connectPromise,
@@ -92,14 +88,10 @@ export async function handleWebSocketUpgrade(
       );
 
       runtime.requestLogger.log(
-        createLogEvent("upgrade", target.host, target.port, relay),
+        createLogEvent(logType, target.host, target.port, relay),
       );
 
-      writeWsUpgradeRequest(upstreamSocket, req, target);
-
-      if (head.length > 0) {
-        upstreamSocket.write(head);
-      }
+      onConnected(upstreamSocket);
 
       clientSocket.pipe(upstreamSocket);
       upstreamSocket.pipe(clientSocket);
@@ -112,7 +104,7 @@ export async function handleWebSocketUpgrade(
   );
 
   if (lastError) {
-    sendTunnelError(clientSocket, lastError.message);
+    sendSocketError(clientSocket, 502, "Bad Gateway", lastError.message);
   }
 }
 
@@ -212,11 +204,4 @@ async function raceConnectOrClientClose(
   } finally {
     cleanupClientListeners?.();
   }
-}
-
-function sendTunnelError(socket: Socket, message: string): void {
-  socket.write(
-    `HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(message)}\r\n\r\n${message}`,
-  );
-  socket.destroy();
 }

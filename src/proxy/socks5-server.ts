@@ -1,17 +1,19 @@
 import { createServer as createTcpServer, type Socket } from "node:net";
 import { createLogEvent } from "../logging/proxy-request-logger";
-import type { ProxyRuntime } from "./http-proxy";
-import { connectViaHttpProxy } from "./http-upstream";
-import { type RelayRetryDeps, tryRelays } from "./relay-retry";
-import { readExact } from "./socket-utils";
-import { connectViaSocks5 } from "./socks5";
+import { connectViaRelay } from "./connect-via-relay";
+import {
+  type ProxyRuntimeBase,
+  type RelayRetryDeps,
+  tryRelays,
+} from "./relay-retry";
+import { onceSocketClosed, readExact } from "./socket-utils";
 
 export interface Socks5Server {
   listen(port: number, hostname?: string): Promise<void>;
   close(): Promise<void>;
 }
 
-export function createSocks5Server(runtime: ProxyRuntime): Socks5Server {
+export function createSocks5Server(runtime: ProxyRuntimeBase): Socks5Server {
   const server = createTcpServer((clientSocket) => {
     handleClient(clientSocket, runtime).catch(() => {
       clientSocket.destroy();
@@ -44,7 +46,7 @@ export function createSocks5Server(runtime: ProxyRuntime): Socks5Server {
 
 async function handleClient(
   clientSocket: Socket,
-  runtime: ProxyRuntime,
+  runtime: ProxyRuntimeBase,
 ): Promise<void> {
   runtime.statsTracker.connectionStart();
   clientSocket.once("close", () => runtime.statsTracker.connectionEnd());
@@ -100,10 +102,7 @@ async function handleClient(
   };
 
   const lastError = await tryRelays(retryDeps, async (relay) => {
-    const upstreamSocket =
-      relay.protocol === "http"
-        ? await connectViaHttpProxy(relay, targetHost, targetPort)
-        : await connectViaSocks5(relay, targetHost, targetPort);
+    const upstreamSocket = await connectViaRelay(relay, targetHost, targetPort);
 
     runtime.requestLogger.log(
       createLogEvent("connect", targetHost, targetPort, relay),
@@ -116,19 +115,10 @@ async function handleClient(
     clientSocket.pipe(upstreamSocket);
     upstreamSocket.pipe(clientSocket);
 
-    await new Promise<void>((resolve) => {
-      const done = () => {
-        clientSocket.off("close", done);
-        clientSocket.off("end", done);
-        upstreamSocket.off("close", done);
-        upstreamSocket.off("end", done);
-        resolve();
-      };
-      clientSocket.once("close", done);
-      clientSocket.once("end", done);
-      upstreamSocket.once("close", done);
-      upstreamSocket.once("end", done);
-    });
+    await Promise.race([
+      onceSocketClosed(clientSocket),
+      onceSocketClosed(upstreamSocket),
+    ]);
   });
 
   if (lastError) {

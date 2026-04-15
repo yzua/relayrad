@@ -139,7 +139,7 @@ export async function loadRelaySources(
       config.useNordvpn,
     );
     if (relays.length === 0) {
-      process.exit(1);
+      throw new Error("All relay sources failed");
     }
   }
 

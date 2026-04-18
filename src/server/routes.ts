@@ -1,8 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { handleHttpProxyRequest } from "../proxy/http-proxy";
 import type { ProxyRuntime } from "../proxy/relay-retry";
-import type { ResolvedRelaySelectionConfig } from "../relay/relay-selector";
 import type { RelayRecord, RelaySelectionConfig } from "../relay/relay-types";
+import type { ResolvedRelaySelectionConfig } from "../relay/relay-utils";
 import type { StatsTracker } from "../stats";
 import { checkProxyAuthRaw, sendProxyAuthRequired } from "./proxy-auth";
 import {

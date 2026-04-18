@@ -1,7 +1,9 @@
 import { describe, test } from "bun:test";
 import { createLogEvent } from "../src/logging/proxy-request-logger";
+import { formatHttpHeaders } from "../src/proxy/http-upstream";
 import { createRelaySelector } from "../src/relay/relay-selector";
 import type { RelayRecord } from "../src/relay/relay-types";
+import { checkProxyAuthRaw } from "../src/server/proxy-auth";
 import { createStickySessionManager } from "../src/server/sticky-session-manager";
 import { createStatsTracker } from "../src/stats";
 
@@ -215,6 +217,82 @@ describe("Performance benchmarks", () => {
     const perOp = elapsed / iterations;
     console.log(
       `[bench] create+filter+list 9581 relays by country: ${perOp.toFixed(3)} µs/op (${iterations} ops in ${elapsed.toFixed(1)} ms)`,
+    );
+  });
+
+  // --- Targeted benchmarks for optimization targets ---
+
+  const TYPICAL_HEADERS: Record<string, string | string[] | undefined> = {
+    host: "example.com",
+    "user-agent": "Mozilla/5.0 relayrad/1.0",
+    accept: "text/html,application/xhtml+xml",
+    "accept-language": "en-US,en;q=0.9",
+    "accept-encoding": "gzip, deflate, br",
+    connection: "close",
+    cookie: "session=abc123def456",
+    "cache-control": "no-cache",
+    referer: "https://example.com/page",
+    "x-forwarded-for": "10.0.0.1",
+    "x-request-id": "req-12345",
+    authorization: "Bearer tokenvalue",
+    "content-type": "application/json",
+    dnt: "1",
+    "sec-fetch-mode": "navigate",
+  };
+
+  test("formatHttpHeaders: realistic 14-header request", () => {
+    const iterations = 100_000;
+    const start = performance.now();
+    for (let i = 0; i < iterations; i++) {
+      formatHttpHeaders("GET /path HTTP/1.1", TYPICAL_HEADERS);
+    }
+    const elapsed = performance.now() - start;
+    const perOp = elapsed / iterations;
+    console.log(
+      `[bench] formatHttpHeaders 14 headers: ${perOp.toFixed(3)} µs/op (${iterations} ops in ${elapsed.toFixed(1)} ms)`,
+    );
+  });
+
+  const AUTH_CREDENTIALS = { username: "proxyuser", password: "secretpass123" };
+  const VALID_AUTH_HEADER = `Basic ${Buffer.from("proxyuser:secretpass123").toString("base64")}`;
+
+  test("checkProxyAuthRaw: valid auth header", () => {
+    const iterations = 100_000;
+    const start = performance.now();
+    for (let i = 0; i < iterations; i++) {
+      checkProxyAuthRaw(VALID_AUTH_HEADER, AUTH_CREDENTIALS);
+    }
+    const elapsed = performance.now() - start;
+    const perOp = elapsed / iterations;
+    console.log(
+      `[bench] checkProxyAuthRaw valid: ${perOp.toFixed(3)} µs/op (${iterations} ops in ${elapsed.toFixed(1)} ms)`,
+    );
+  });
+
+  test("checkProxyAuthRaw: missing header (fast reject)", () => {
+    const iterations = 100_000;
+    const start = performance.now();
+    for (let i = 0; i < iterations; i++) {
+      checkProxyAuthRaw(undefined, AUTH_CREDENTIALS);
+    }
+    const elapsed = performance.now() - start;
+    const perOp = elapsed / iterations;
+    console.log(
+      `[bench] checkProxyAuthRaw missing: ${perOp.toFixed(3)} µs/op (${iterations} ops in ${elapsed.toFixed(1)} ms)`,
+    );
+  });
+
+  test("checkProxyAuthRaw: wrong credentials", () => {
+    const wrongHeader = `Basic ${Buffer.from("wrong:creds").toString("base64")}`;
+    const iterations = 100_000;
+    const start = performance.now();
+    for (let i = 0; i < iterations; i++) {
+      checkProxyAuthRaw(wrongHeader, AUTH_CREDENTIALS);
+    }
+    const elapsed = performance.now() - start;
+    const perOp = elapsed / iterations;
+    console.log(
+      `[bench] checkProxyAuthRaw wrong: ${perOp.toFixed(3)} µs/op (${iterations} ops in ${elapsed.toFixed(1)} ms)`,
     );
   });
 });

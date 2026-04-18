@@ -69,7 +69,7 @@ curl -x http://127.0.0.1:4123 \
   http://httpbin.org/ip
 ```
 
-`X-Proxy-Session` pins repeated HTTP requests and repeated `CONNECT` requests with the same header value to one relay for 5 minutes of inactivity. If that relay becomes unhealthy, relayrad automatically rebinds the session to the next working relay.
+`X-Proxy-Session` pins repeated HTTP, CONNECT, and WebSocket requests with the same header value to one relay for 5 minutes of inactivity. If that relay becomes unhealthy, relayrad automatically rebinds the session to the next working relay.
 
 When the selected relay is TOR, relayrad also reuses the same SOCKS auth identity for the same `X-Proxy-Session` instead of generating a fresh one per connection. This gives the local TOR daemon a stable isolation token, but the final exit IP still depends on your TOR `SocksPort` isolation settings.
 

@@ -21,7 +21,7 @@
 | WebSocket upgrade proxying   | `src/proxy/tunnel-handlers.ts`   | `ws://` URL proxying + upgrade event handling via relay retry                       |
 | HTTP proxy upstream (TLS)    | `src/proxy/http-upstream.ts`     | CONNECT via TLS, HTTP request formatting, proxy auth header                         |
 | Shared socket utilities      | `src/proxy/socket-utils.ts`      | `readUntilHeaderEnd`, `waitForSocketDrain`, `onceSocketClosed`, `readExact`         |
-| SOCKS5 client handshake      | `src/proxy/socks5.ts`            | Greeting, connect request framing, status validation, prewarm cache                 |
+| SOCKS5 client handshake      | `src/proxy/socks5.ts`            | Greeting, connect request framing, status validation, unique SOCKS5 auth for TOR    |
 | SOCKS5 server listener       | `src/proxy/socks5-server.ts`     | Accepts SOCKS5 clients, routes through relays (protocol-aware)                      |
 | Socket prewarm cache         | `src/proxy/socket-prewarm.ts`    | TCP connection cache for SOCKS5 relays (max 64, 2s idle TTL)                        |
 | Proxy runtime + retry        | `src/proxy/relay-retry.ts`       | `ProxyRuntime`, `tryRelays`, `createRetryDeps`, sticky session header parse         |

@@ -1,3 +1,8 @@
+const expectedHeaderCache = new WeakMap<
+  { username: string; password: string },
+  string
+>();
+
 export function checkProxyAuthRaw(
   header: string | undefined,
   expected: { username: string; password: string },
@@ -6,16 +11,13 @@ export function checkProxyAuthRaw(
     return false;
   }
 
-  const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
-  const separator = decoded.indexOf(":");
-  if (separator === -1) {
-    return false;
+  let expectedHeader = expectedHeaderCache.get(expected);
+  if (!expectedHeader) {
+    expectedHeader = `Basic ${Buffer.from(`${expected.username}:${expected.password}`).toString("base64")}`;
+    expectedHeaderCache.set(expected, expectedHeader);
   }
 
-  return (
-    decoded.slice(0, separator) === expected.username &&
-    decoded.slice(separator + 1) === expected.password
-  );
+  return header === expectedHeader;
 }
 
 export function sendProxyAuthRequired(

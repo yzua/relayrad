@@ -64,11 +64,11 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
       const cacheKey = relayFilterCacheKey(filters);
       const cached = relayListCache.get(cacheKey);
       if (cached) {
-        return [...cached];
+        return cached;
       }
 
-      const next = createRelaySelector(relays, filters).list();
-      relayListCache.set(cacheKey, next);
+      const result = createRelaySelector(relays, filters).list();
+      relayListCache.set(cacheKey, result);
 
       if (relayListCache.size > 64) {
         const oldestKey = relayListCache.keys().next().value;
@@ -77,7 +77,7 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
         }
       }
 
-      return [...next];
+      return result;
     },
     updateConfig: (nextConfig) => {
       selector.update(relays, nextConfig);
@@ -196,13 +196,6 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
 }
 
 function relayFilterCacheKey(filters: RelaySelectionConfig): string {
-  return JSON.stringify({
-    country: filters.country ?? "",
-    city: filters.city ?? "",
-    hostname: filters.hostname ?? "",
-    provider: filters.provider ?? "",
-    ownership: filters.ownership ?? "",
-    excludeCountry: filters.excludeCountry ?? [],
-    sort: filters.sort ?? "",
-  });
+  const ec = filters.excludeCountry;
+  return `${filters.country ?? ""}\0${filters.city ?? ""}\0${filters.hostname ?? ""}\0${filters.provider ?? ""}\0${filters.ownership ?? ""}\0${ec ? ec.join(",") : ""}\0${filters.sort ?? ""}`;
 }

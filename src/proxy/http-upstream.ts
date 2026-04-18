@@ -62,27 +62,33 @@ export function formatHttpHeaders(
   requestLine: string,
   headers: Record<string, string | string[] | undefined>,
 ): string {
-  const lines = [requestLine];
-
-  for (const [name, value] of Object.entries(headers)) {
+  let out = requestLine;
+  for (const name of Object.keys(headers)) {
+    const value = headers[name];
     if (value === undefined) continue;
-    if (Array.isArray(value)) {
-      for (const item of value) lines.push(`${name}: ${item}`);
+    if (typeof value === "string") {
+      out += `\r\n${name}: ${value}`;
     } else {
-      lines.push(`${name}: ${value}`);
+      for (let j = 0; j < value.length; j++) {
+        out += `\r\n${name}: ${value[j]}`;
+      }
     }
   }
-
-  lines.push("", "");
-  return lines.join("\r\n");
+  return `${out}\r\n\r\n`;
 }
+
+const proxyAuthCache = new WeakMap<RelayRecord, string>();
 
 export function buildProxyAuthHeader(relay: RelayRecord): string | undefined {
   if (!relay.socks5Username) return undefined;
+  const cached = proxyAuthCache.get(relay);
+  if (cached) return cached;
   const credentials = Buffer.from(
     `${relay.socks5Username}:${relay.socks5Password ?? ""}`,
   ).toString("base64");
-  return `Proxy-Authorization: Basic ${credentials}`;
+  const header = `Proxy-Authorization: Basic ${credentials}`;
+  proxyAuthCache.set(relay, header);
+  return header;
 }
 
 function openTlsSocket(host: string, port: number): Promise<Socket> {

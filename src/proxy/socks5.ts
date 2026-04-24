@@ -33,31 +33,49 @@ export async function connectViaSocks5(
 
     parts.push(buildSocks5ConnectRequest(targetHost, targetPort));
 
-    // With auth: method(2) + auth(2) + connect(10) = 14 bytes
-    // Without:   method(2) + connect(10) = 12 bytes
+    // When all frames are sent in one write, some SOCKS5 servers (notably Tor)
+    // skip the method selection response and reply with auth + connect only
+    // (12 bytes).  Others send method + auth + connect (14 bytes).  Request
+    // the lower bound and parse based on the first byte.
     const response = await writeAndExpect(
       socket,
       Buffer.concat(parts),
-      hasAuth ? 14 : 12,
+      12,
       SOCKS5_CONNECT_TIMEOUT_MS,
     );
 
-    // Parse the combined response
+    // Parse the combined response — layout depends on whether the server
+    // included the method selection reply.
     let offset = 0;
-    const methodStatus = response[1] ?? 0xff;
 
     if (hasAuth) {
-      if (methodStatus !== 0x02) {
+      if (response[0] === 0x05) {
+        // Full response: method(05 02) + auth(01 00) + connect(10)
+        const methodStatus = response[1] ?? 0xff;
+        if (methodStatus !== 0x02) {
+          throw new Error(
+            `SOCKS5 auth negotiation failed with method ${methodStatus}`,
+          );
+        }
+        const authStatus = response[3] ?? 0x01;
+        if (authStatus !== 0x00) {
+          throw new Error("SOCKS5 username/password authentication rejected");
+        }
+        offset = 4;
+      } else if (response[0] === 0x01) {
+        // Tor pipelined: auth(01 00) + connect(10) — method reply omitted
+        const authStatus = response[1] ?? 0x01;
+        if (authStatus !== 0x00) {
+          throw new Error("SOCKS5 username/password authentication rejected");
+        }
+        offset = 2;
+      } else {
         throw new Error(
-          `SOCKS5 auth negotiation failed with method ${methodStatus}`,
+          `Unexpected SOCKS5 response byte: 0x${response[0]?.toString(16).padStart(2, "0")}`,
         );
       }
-      const authStatus = response[3] ?? 0x01;
-      if (authStatus !== 0x00) {
-        throw new Error("SOCKS5 username/password authentication rejected");
-      }
-      offset = 4;
     } else {
+      const methodStatus = response[1] ?? 0xff;
       if (methodStatus !== 0x00) {
         throw new Error(
           `SOCKS5 auth negotiation failed with method ${methodStatus}`,

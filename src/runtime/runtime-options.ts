@@ -10,8 +10,10 @@ export interface RuntimeOptions {
   useMullvad: boolean;
   useTor: boolean;
   useNordvpn: boolean;
+  useGithubLists: boolean;
   torPort: number;
   noTui: boolean;
+  relayRefreshIntervalMs: number;
 }
 
 interface ParseRuntimeOptionsInput {
@@ -40,8 +42,10 @@ export function parseRuntimeOptions({
     useMullvad: parseFlag(argv, "--mullvad"),
     useTor: parseFlag(argv, "--tor"),
     useNordvpn: parseFlag(argv, "--nordvpn"),
+    useGithubLists: parseFlag(argv, "--github-lists"),
     torPort,
     noTui: parseFlag(argv, "--no-tui"),
+    relayRefreshIntervalMs: parseRelayRefreshInterval(argv, env),
   };
 }
 
@@ -110,4 +114,33 @@ function extractFlagValue(
 
 function parseFlag(argv: string[], flag: string): boolean {
   return argv.includes(flag);
+}
+
+function parseRelayRefreshInterval(
+  argv: string[],
+  env: Record<string, string | undefined>,
+): number {
+  const flagValue = extractFlagValue(
+    argv,
+    "Missing relay refresh interval value",
+    "--relay-refresh-interval",
+  );
+  if (flagValue !== undefined) {
+    const ms = Number(flagValue);
+    if (!Number.isFinite(ms) || ms < 0) {
+      throw new Error(`Invalid relay refresh interval: ${flagValue}`);
+    }
+    return ms;
+  }
+
+  const envValue = env["RELAYRAD_RELAY_REFRESH_INTERVAL"];
+  if (envValue !== undefined && envValue.trim() !== "") {
+    const ms = Number(envValue.trim());
+    if (!Number.isFinite(ms) || ms < 0) {
+      throw new Error(`Invalid RELAYRAD_RELAY_REFRESH_INTERVAL: ${envValue}`);
+    }
+    return ms;
+  }
+
+  return 3_600_000;
 }

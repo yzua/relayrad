@@ -32,6 +32,11 @@ export async function runTui(): Promise<TuiConfig> {
       disabled: torAvailable ? false : "TOR not detected",
     },
     { name: "NordVPN", value: "nordvpn", checked: false },
+    {
+      name: "GitHub Lists",
+      value: "github-lists",
+      checked: false,
+    },
   ];
 
   const sources = await checkbox({
@@ -114,7 +119,7 @@ export function shouldShowTui(argv: string[]): boolean {
     return false;
   }
 
-  const sourceFlags = ["--mullvad", "--tor", "--nordvpn"];
+  const sourceFlags = ["--mullvad", "--tor", "--nordvpn", "--github-lists"];
   if (sourceFlags.some((flag) => argv.includes(flag))) {
     return false;
   }

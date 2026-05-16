@@ -1,3 +1,4 @@
+import { loadGithubListRelays } from "../relay/github-lists/github-lists";
 import { loadRelaysFromMullvadApi } from "../relay/mullvad/mullvad-api";
 import { loadNordvpnRelays } from "../relay/nordvpn/nordvpn";
 import type { RelayRecord } from "../relay/relay-types";
@@ -13,6 +14,7 @@ export interface StartupOverrides {
   useMullvad?: boolean | undefined;
   useTor?: boolean | undefined;
   useNordvpn?: boolean | undefined;
+  useGithubLists?: boolean | undefined;
 }
 
 export interface StartupConfig {
@@ -25,7 +27,9 @@ export interface StartupConfig {
   useMullvad: boolean;
   useTor: boolean;
   useNordvpn: boolean;
+  useGithubLists: boolean;
   torPort: number;
+  relayRefreshIntervalMs: number;
 }
 
 export function resolveStartupConfig(
@@ -34,8 +38,12 @@ export function resolveStartupConfig(
 ): StartupConfig {
   const useTor = overrides?.useTor ?? options.useTor;
   const useNordvpn = overrides?.useNordvpn ?? options.useNordvpn;
+  const useGithubLists = overrides?.useGithubLists ?? options.useGithubLists;
   const anySourceExplicit =
-    (overrides?.useMullvad ?? options.useMullvad) || useTor || useNordvpn;
+    (overrides?.useMullvad ?? options.useMullvad) ||
+    useTor ||
+    useNordvpn ||
+    useGithubLists;
 
   return {
     host: options.host,
@@ -49,7 +57,9 @@ export function resolveStartupConfig(
       overrides?.useMullvad ?? (anySourceExplicit ? options.useMullvad : true),
     useTor,
     useNordvpn,
+    useGithubLists,
     torPort: options.torPort,
+    relayRefreshIntervalMs: options.relayRefreshIntervalMs,
   };
 }
 
@@ -88,7 +98,7 @@ async function tryLoadSource(
 export async function loadRelaySources(
   config: Pick<
     StartupConfig,
-    "useMullvad" | "useTor" | "useNordvpn" | "torPort"
+    "useMullvad" | "useTor" | "useNordvpn" | "useGithubLists" | "torPort"
   >,
   env: Record<string, string | undefined>,
 ): Promise<RelayRecord[]> {
@@ -130,6 +140,21 @@ export async function loadRelaySources(
     );
   }
 
+  if (config.useGithubLists) {
+    await tryLoadSource(
+      "GitHub Lists",
+      async () => {
+        const result = await loadGithubListRelays();
+        for (const warning of result.warnings) {
+          console.warn(`relayrad: warning: ${warning}`);
+        }
+        return result.relays;
+      },
+      relays,
+      errors,
+    );
+  }
+
   if (errors.length > 0) {
     reportSourceErrors(
       errors,
@@ -137,6 +162,7 @@ export async function loadRelaySources(
       config.useMullvad,
       config.useTor,
       config.useNordvpn,
+      config.useGithubLists,
     );
     if (relays.length === 0) {
       throw new Error("All relay sources failed");
@@ -155,6 +181,9 @@ export function formatLoadedSources(relays: RelayRecord[]): string {
   const nordvpnCount = relays.filter(
     (relay) => relay.source === "nordvpn",
   ).length;
+  const githubListsCount = relays.filter(
+    (relay) => relay.source === "github-lists",
+  ).length;
 
   if (mullvadCount > 0) {
     sourceLabels.push(`mullvad(${mullvadCount} relays)`);
@@ -170,6 +199,10 @@ export function formatLoadedSources(relays: RelayRecord[]): string {
     sourceLabels.push(`nordvpn(${nordvpnCount} servers)`);
   }
 
+  if (githubListsCount > 0) {
+    sourceLabels.push(`github-lists(${githubListsCount} proxies)`);
+  }
+
   return sourceLabels.join(", ");
 }
 
@@ -179,6 +212,7 @@ function reportSourceErrors(
   useMullvad: boolean,
   useTor: boolean,
   useNordvpn: boolean,
+  useGithubLists: boolean,
 ): void {
   for (const err of errors) {
     console.error(`relayrad: failed to load ${err}`);
@@ -209,6 +243,14 @@ function reportSourceErrors(
     console.error("  - Or override the API URL:");
     console.error(
       "      NORDVPN_API_URL=https://custom-endpoint bun run start",
+    );
+  }
+
+  if (useGithubLists) {
+    console.error("");
+    console.error("To fix GitHub Lists:");
+    console.error(
+      "  - Check network connectivity to raw.githubusercontent.com",
     );
   }
 }

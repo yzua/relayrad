@@ -10,18 +10,20 @@ curl -x http://127.0.0.1:4123 http://httpbin.org/ip   # TOR circuit
 
 ## Sources
 
-| Source  | Relays                                         | Auth                | Install needed               |
-| ------- | ---------------------------------------------- | ------------------- | ---------------------------- |
-| Mullvad | ~580                                           | None                | No                           |
-| NordVPN | ~9000                                          | Service credentials | No (requires VPN connection) |
-| TOR     | 1 endpoint (routes through entire TOR network) | None                | Yes (local tor)              |
+| Source       | Relays                                         | Auth                | Install needed               |
+| ------------ | ---------------------------------------------- | ------------------- | ---------------------------- |
+| Mullvad      | ~580                                           | None                | No                           |
+| NordVPN      | ~9000                                          | Service credentials | No (requires VPN connection) |
+| TOR          | 1 endpoint (routes through entire TOR network) | None                | Yes (local tor)              |
+| GitHub Lists | Variable (public SOCKS5/SOCKS4/HTTP lists)     | None                | No                           |
 
 ## Quick start
 
 ```bash
 bun install
-bun run start           # interactive TUI
+bun run start                          # interactive TUI
 bun run start -- --mullvad --nordvpn   # skip TUI
+bun run start -- --github-lists        # public proxy lists from GitHub
 ```
 
 **NordVPN** requires an active NordVPN VPN connection on the host. Service credentials are needed. Get them at:
@@ -95,30 +97,33 @@ curl -X POST http://127.0.0.1:4123/rotate \
 
 ## CLI flags
 
-| Flag                     | Default | Description                         |
-| ------------------------ | ------- | ----------------------------------- |
-| `--mullvad`              | off     | Mullvad source                      |
-| `--tor`                  | off     | TOR source                          |
-| `--nordvpn`              | off     | NordVPN source                      |
-| `--port`, `-p`           | `4123`  | HTTP proxy port                     |
-| `--socks5-port`          | off     | SOCKS5 listener port                |
-| `--proxy-auth`           | off     | `user:pass` for incoming proxy auth |
-| `--tor-port`             | `9050`  | TOR SOCKS5 port                     |
-| `--log-proxy-sqlite`     | off     | SQLite log path                     |
-| `--no-log-proxy-console` | off     | Disable console logs                |
-| `--no-tui`               | off     | Skip interactive setup              |
+| Flag                       | Default   | Description                                |
+| -------------------------- | --------- | ------------------------------------------ |
+| `--mullvad`                | off       | Mullvad source                             |
+| `--tor`                    | off       | TOR source                                 |
+| `--nordvpn`                | off       | NordVPN source                             |
+| `--github-lists`           | off       | GitHub Lists source (SOCKS5/SOCKS4/HTTP)   |
+| `--port`, `-p`             | `4123`    | HTTP proxy port                            |
+| `--socks5-port`            | off       | SOCKS5 listener port                       |
+| `--proxy-auth`             | off       | `user:pass` for incoming proxy auth        |
+| `--tor-port`               | `9050`    | TOR SOCKS5 port                            |
+| `--relay-refresh-interval` | `3600000` | Relay auto-refresh interval (milliseconds) |
+| `--log-proxy-sqlite`       | off       | SQLite log path                            |
+| `--no-log-proxy-console`   | off       | Disable console logs                       |
+| `--no-tui`                 | off       | Skip interactive setup                     |
 
 ## Environment variables
 
-| Variable                       | Description                      |
-| ------------------------------ | -------------------------------- |
-| `RELAYRAD_HOST`                | Bind host (default `127.0.0.1`)  |
-| `RELAYRAD_PORT`                | Bind port (default `4123`)       |
-| `NORDVPN_USERNAME`             | NordVPN service username         |
-| `NORDVPN_PASSWORD`             | NordVPN service password         |
-| `NORDVPN_API_URL`              | Override NordVPN API endpoint    |
-| `RELAYRAD_SOCKS_HOST_OVERRIDE` | Override Mullvad SOCKS5 hostname |
-| `RELAYRAD_SOCKS_PORT_OVERRIDE` | Override Mullvad SOCKS5 port     |
+| Variable                          | Description                      |
+| --------------------------------- | -------------------------------- |
+| `RELAYRAD_HOST`                   | Bind host (default `127.0.0.1`)  |
+| `RELAYRAD_PORT`                   | Bind port (default `4123`)       |
+| `NORDVPN_USERNAME`                | NordVPN service username         |
+| `NORDVPN_PASSWORD`                | NordVPN service password         |
+| `NORDVPN_API_URL`                 | Override NordVPN API endpoint    |
+| `RELAYRAD_SOCKS_HOST_OVERRIDE`    | Override Mullvad SOCKS5 hostname |
+| `RELAYRAD_SOCKS_PORT_OVERRIDE`    | Override Mullvad SOCKS5 port     |
+| `RELAYRAD_RELAY_REFRESH_INTERVAL` | Relay auto-refresh interval (ms) |
 
 See `.env.example` for all options.
 
@@ -144,6 +149,7 @@ Mullvad-specific fields (only meaningful when filtering Mullvad relays):
 
 NordVPN relays always have `provider: "nordvpn"`, `ownership: "rented"`.
 TOR relay has `provider: "tor-project"`, `ownership: "owned"`.
+GitHub Lists relays always have `provider: "github-lists"`, `ownership: "rented"`.
 
 ## How it works
 
@@ -154,7 +160,9 @@ TOR relay has `provider: "tor-project"`, `ownership: "owned"`.
 - Mullvad: SOCKS5 per server, no auth, public endpoints
 - NordVPN: HTTP proxy (TLS) on `*.proxy.nordvpn.com:89`, requires VPN connection + service credentials
 - TOR: one local SOCKS5 endpoint (localhost:9050), but TOR internally routes through thousands of relays and rotates circuits per request
+- GitHub Lists: public SOCKS5, SOCKS4, and HTTP proxy lists from GitHub; HTTP entries use plain CONNECT (no TLS)
 - WebSocket upgrades are proxied through the same relay retry and sticky session paths
+- Relays auto-refresh at a configurable interval (default 60 minutes via `--relay-refresh-interval`)
 
 ## Development
 

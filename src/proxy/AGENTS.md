@@ -13,18 +13,19 @@
 
 ## KEY FILES
 
-| Task                         | File                             | Notes                                                                               |
-| ---------------------------- | -------------------------------- | ----------------------------------------------------------------------------------- |
-| Protocol-aware relay connect | `src/proxy/connect-via-relay.ts` | Dispatches to `connectViaSocks5` or `connectViaHttpProxy` based on `relay.protocol` |
-| HTTP proxy forwarding        | `src/proxy/http-proxy.ts`        | Absolute `http://`/`ws://` URL validation, request rewrite                          |
-| CONNECT tunnel behavior      | `src/proxy/tunnel-handlers.ts`   | CONNECT authority parse + bidirectional socket piping via relay retry               |
-| WebSocket upgrade proxying   | `src/proxy/tunnel-handlers.ts`   | `ws://` URL proxying + upgrade event handling via relay retry                       |
-| HTTP proxy upstream (TLS)    | `src/proxy/http-upstream.ts`     | CONNECT via TLS, HTTP request formatting, proxy auth header                         |
-| Shared socket utilities      | `src/proxy/socket-utils.ts`      | `readUntilHeaderEnd`, `waitForSocketDrain`, `onceSocketClosed`, `readExact`         |
-| SOCKS5 client handshake      | `src/proxy/socks5.ts`            | Greeting, connect request framing, status validation, unique SOCKS5 auth for TOR    |
-| SOCKS5 server listener       | `src/proxy/socks5-server.ts`     | Accepts SOCKS5 clients, routes through relays (protocol-aware)                      |
-| Socket prewarm cache         | `src/proxy/socket-prewarm.ts`    | TCP connection cache for SOCKS5 relays (max 64, 2s idle TTL)                        |
-| Proxy runtime + retry        | `src/proxy/relay-retry.ts`       | `ProxyRuntime`, `tryRelays`, `createRetryDeps`, sticky session header parse         |
+| Task                         | File                             | Notes                                                                                                       |
+| ---------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Protocol-aware relay connect | `src/proxy/connect-via-relay.ts` | Dispatches to `connectViaSocks5`, `connectViaHttpProxy`, or `connectViaHttpPlain` based on `relay.protocol` |
+| HTTP proxy forwarding        | `src/proxy/http-proxy.ts`        | Absolute `http://`/`ws://` URL validation, request rewrite                                                  |
+| Plain HTTP proxy upstream    | `src/proxy/http-plain.ts`        | CONNECT without TLS for `protocol: "http-plain"` relays                                                     |
+| CONNECT tunnel behavior      | `src/proxy/tunnel-handlers.ts`   | CONNECT authority parse + bidirectional socket piping via relay retry                                       |
+| WebSocket upgrade proxying   | `src/proxy/tunnel-handlers.ts`   | `ws://` URL proxying + upgrade event handling via relay retry                                               |
+| HTTP proxy upstream (TLS)    | `src/proxy/http-upstream.ts`     | CONNECT via TLS, HTTP request formatting, proxy auth header                                                 |
+| Shared socket utilities      | `src/proxy/socket-utils.ts`      | `readUntilHeaderEnd`, `waitForSocketDrain`, `onceSocketClosed`, `readExact`                                 |
+| SOCKS5 client handshake      | `src/proxy/socks5.ts`            | Greeting, connect request framing, status validation, unique SOCKS5 auth for TOR                            |
+| SOCKS5 server listener       | `src/proxy/socks5-server.ts`     | Accepts SOCKS5 clients, routes through relays (protocol-aware)                                              |
+| Socket prewarm cache         | `src/proxy/socket-prewarm.ts`    | TCP connection cache for SOCKS5 relays (max 64, 2s idle TTL)                                                |
+| Proxy runtime + retry        | `src/proxy/relay-retry.ts`       | `ProxyRuntime`, `tryRelays`, `createRetryDeps`, sticky session header parse                                 |
 
 ## LOCAL INVARIANTS
 
@@ -33,7 +34,7 @@
 - `tryRelays` must mark failed relays unhealthy before moving to the next candidate.
 - Header read limits/timeouts (in `socket-utils.ts`) are safety guards, not optional behavior.
 - CONNECT authority parsing must validate host + integer port in `1..65535`.
-- Dual upstream transport: `protocol: "socks5"` relays use `connectViaSocks5`, `protocol: "http"` relays use `connectViaHttpProxy` with TLS.
+- Triple upstream transport: `protocol: "socks5"` relays use `connectViaSocks5`, `protocol: "http"` relays use `connectViaHttpProxy` with TLS, `protocol: "http-plain"` relays use `connectViaHttpPlain` without TLS.
 
 ## ANTI-PATTERNS
 

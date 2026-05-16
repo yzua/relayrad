@@ -1,7 +1,6 @@
 import { createProxyRequestLogger } from "./src/logging/proxy-request-logger";
-import type { ProxyRuntimeBase } from "./src/proxy/relay-retry";
+import { createProxyRuntimeHandle } from "./src/proxy/proxy-runtime";
 import { createSocks5Server } from "./src/proxy/socks5-server";
-import { createRelaySelector } from "./src/relay/relay-selector";
 import type { RelayRecord } from "./src/relay/relay-types";
 import { parseRuntimeOptions } from "./src/runtime/runtime-options";
 import {
@@ -83,20 +82,13 @@ if (startupConfig.relayRefreshIntervalMs > 0) {
 
 let socks5: ReturnType<typeof createSocks5Server> | undefined;
 if (startupConfig.socks5Port) {
-  const selector = createRelaySelector(initialRelays, {
-    sort: "random",
-    unhealthyBackoffMs: 30_000,
-  });
-
-  const socks5Runtime: ProxyRuntimeBase = {
-    pickRelay: () => selector.next(),
-    pickRelayFromSource: (source: string) => selector.nextFromSource(source),
-    markRelayUnhealthy: (hostname: string) => selector.markUnhealthy(hostname),
+  const socks5Handle = createProxyRuntimeHandle({
+    relays: initialRelays,
     requestLogger,
     statsTracker,
-  };
+  });
 
-  socks5 = createSocks5Server(socks5Runtime);
+  socks5 = createSocks5Server(socks5Handle.runtime);
   await socks5.listen(startupConfig.socks5Port, startupConfig.host);
   console.log(
     `relayrad SOCKS5 listening on socks5://${startupConfig.host}:${startupConfig.socks5Port}`,

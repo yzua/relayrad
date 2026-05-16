@@ -4,6 +4,7 @@ import {
 } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import type { ProxyRequestLogger } from "../logging/proxy-request-logger";
+import { createProxyRuntimeHandle } from "../proxy/proxy-runtime";
 import {
   type ProxyRuntime,
   parseStickySessionHeader,
@@ -16,13 +17,9 @@ import {
 import { createRelaySelector } from "../relay/relay-selector";
 import type { RelayRecord, RelaySelectionConfig } from "../relay/relay-types";
 import type { StatsTracker } from "../stats";
-import { defaultSelectionConfig } from "./config";
 import { checkProxyAuthRaw } from "./proxy-auth";
 import { type RouteDeps, routeRequest, sendJson } from "./routes";
 import { InvalidJsonBodyError } from "./selection-config";
-import { createStickySessionManager } from "./sticky-session-manager";
-
-const STICKY_SESSION_TTL_MS = 5 * 60_000;
 
 export interface ProxyServerDeps {
   initialRelays: RelayRecord[];
@@ -41,25 +38,14 @@ export interface ProxyServer {
 
 export function createServer(deps: ProxyServerDeps): ProxyServer {
   let relays = [...deps.initialRelays];
-  let relayByHostname = new Map<string, RelayRecord>(
-    relays.map((r) => [r.hostname, r]),
-  );
-  const selector = createRelaySelector(relays, defaultSelectionConfig);
-  const relayListCache = new Map<string, RelayRecord[]>();
-  const stickySessions = createStickySessionManager(STICKY_SESSION_TTL_MS);
-
-  const runtime: ProxyRuntime = {
-    pickRelay: () => selector.next(),
-    pickRelayFromSource: (source: string) => selector.nextFromSource(source),
-    pickStickyRelay: (sessionKey) =>
-      stickySessions.get(sessionKey, relayByHostname),
-    rememberStickyRelay: (sessionKey, relayHostname) =>
-      stickySessions.set(sessionKey, relayHostname),
-    clearStickyRelay: (sessionKey) => stickySessions.delete(sessionKey),
-    markRelayUnhealthy: (hostname: string) => selector.markUnhealthy(hostname),
+  const handle = createProxyRuntimeHandle({
+    relays,
     requestLogger: deps.requestLogger,
     statsTracker: deps.statsTracker,
-  };
+  });
+  const relayListCache = new Map<string, RelayRecord[]>();
+
+  const runtime: ProxyRuntime = handle.runtime;
 
   const routeDeps: RouteDeps = {
     listRelays: (filters) => {
@@ -82,14 +68,14 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
       return result;
     },
     updateConfig: (nextConfig) => {
-      selector.update(relays, nextConfig);
+      handle.selector.update(relays, nextConfig);
       relayListCache.clear();
-      return selector.getConfig();
+      return handle.selector.getConfig();
     },
     refresh: async () => {
       relays = await deps.refreshRelays();
-      relayByHostname = new Map(relays.map((r) => [r.hostname, r]));
-      selector.update(relays);
+      handle.setRelays(relays);
+      handle.selector.update(relays);
       relayListCache.clear();
       return relays;
     },

@@ -12,12 +12,19 @@ export async function connectViaSocks5(
   targetPort: number,
   uniqueAuthKey?: string,
 ): Promise<Socket> {
-  const socket = await openSocket(relay.socks5Hostname, relay.socks5Port);
+  const tcpTimeout = relay.connectTimeoutMs ?? TCP_CONNECT_TIMEOUT_MS;
+  const socket = await openSocket(
+    relay.socks5Hostname,
+    relay.socks5Port,
+    tcpTimeout,
+  );
 
   try {
     const auth = resolveSocks5Auth(relay, uniqueAuthKey);
     const hasAuth = auth !== undefined;
 
+    const handshakeTimeout =
+      relay.connectTimeoutMs ?? SOCKS5_CONNECT_TIMEOUT_MS;
     // Build all SOCKS5 handshake payloads upfront.
     // Sending method + auth + connect in one TCP write collapses 3 round
     // trips (method, auth, connect) into a single round trip.
@@ -41,7 +48,7 @@ export async function connectViaSocks5(
       socket,
       Buffer.concat(parts),
       12,
-      SOCKS5_CONNECT_TIMEOUT_MS,
+      handshakeTimeout,
     );
 
     // Parse the combined response — layout depends on whether the server
@@ -176,7 +183,11 @@ function classifyHost(host: string): "ipv4" | "domain" {
   return /^\d+\.\d+\.\d+\.\d+$/.test(host) ? "ipv4" : "domain";
 }
 
-function openSocket(host: string, port: number): Promise<Socket> {
+function openSocket(
+  host: string,
+  port: number,
+  timeoutMs = TCP_CONNECT_TIMEOUT_MS,
+): Promise<Socket> {
   const prewarmed = takePrewarmedSocket(host, port);
   if (prewarmed) {
     prewarmRelaySocket(host, port);
@@ -188,7 +199,7 @@ function openSocket(host: string, port: number): Promise<Socket> {
     const timer = setTimeout(() => {
       socket.destroy();
       reject(new Error(`TCP connect to ${host}:${port} timed out`));
-    }, TCP_CONNECT_TIMEOUT_MS);
+    }, timeoutMs);
     timer.unref?.();
 
     socket.once("connect", () => {

@@ -1,5 +1,5 @@
 export type RelayOwnership = "owned" | "rented";
-export type RelaySource = "mullvad" | "tor" | "nordvpn";
+export type RelaySource = "mullvad" | "tor" | "nordvpn" | "github-lists";
 
 export interface RelayRecord {
   source: RelaySource;
@@ -18,6 +18,7 @@ export interface RelayRecord {
   socks5Username?: string | undefined;
   socks5Password?: string | undefined;
   socks5UniqueAuth?: boolean | undefined;
+  connectTimeoutMs?: number | undefined;
 }
 
 export interface RelayFilters {

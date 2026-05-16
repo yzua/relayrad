@@ -4,7 +4,7 @@
 
 ## OVERVIEW
 
-`src/relay` aggregates relay nodes from multiple sources (Mullvad API, NordVPN API, TOR) into typed relay records and applies filtering/sorting/rotation with unhealthy backoff and country exclusion.
+`src/relay` aggregates relay nodes from multiple sources (Mullvad API, NordVPN API, TOR, GitHub Lists) into typed relay records and applies filtering/sorting/rotation with unhealthy backoff and country exclusion.
 
 ## OVERRIDES ROOT
 

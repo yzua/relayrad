@@ -30,7 +30,7 @@ src/
 | Task                                | File                                   | Notes                                                                      |
 | ----------------------------------- | -------------------------------------- | -------------------------------------------------------------------------- |
 | Add/adjust API route behavior       | `src/server/routes.ts`                 | Keep `routeRequest` branch style and JSON response helpers                 |
-| Change default selection config     | `src/server/config.ts`                 | Live server defaults (`sort: "random"`, `unhealthyBackoffMs: 30000`)       |
+| Change default selection config     | `src/proxy/proxy-runtime.ts`           | `RUNTIME_DEFAULT_CONFIG` — `sort: "random"`, `unhealthyBackoffMs: 30000`   |
 | Change proxy auth behavior          | `src/server/proxy-auth.ts`             | Basic auth parsing + `407` response                                        |
 | Change sticky session behavior      | `src/server/sticky-session-manager.ts` | Session-keyed relay pinning with inactivity TTL                            |
 | Change protocol-aware relay connect | `src/proxy/connect-via-relay.ts`       | Dispatches to SOCKS5, HTTP (TLS), or plain HTTP based on `relay.protocol`  |

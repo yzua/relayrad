@@ -74,6 +74,13 @@ console.log(
   `loaded ${initialRelays.length} relay endpoint${initialRelays.length === 1 ? "" : "s"} from ${formatLoadedSources(initialRelays)}`,
 );
 
+if (startupConfig.relayRefreshIntervalMs > 0) {
+  const minutes = startupConfig.relayRefreshIntervalMs / 60_000;
+  console.log(
+    `relay auto-refresh every ${minutes} minute${minutes === 1 ? "" : "s"}`,
+  );
+}
+
 let socks5: ReturnType<typeof createSocks5Server> | undefined;
 if (startupConfig.socks5Port) {
   const selector = createRelaySelector(initialRelays, {
@@ -83,6 +90,7 @@ if (startupConfig.socks5Port) {
 
   const socks5Runtime: ProxyRuntimeBase = {
     pickRelay: () => selector.next(),
+    pickRelayFromSource: (source: string) => selector.nextFromSource(source),
     markRelayUnhealthy: (hostname: string) => selector.markUnhealthy(hostname),
     requestLogger,
     statsTracker,
@@ -93,6 +101,22 @@ if (startupConfig.socks5Port) {
   console.log(
     `relayrad SOCKS5 listening on socks5://${startupConfig.host}:${startupConfig.socks5Port}`,
   );
+}
+
+let refreshTimer: ReturnType<typeof setInterval> | undefined;
+if (startupConfig.relayRefreshIntervalMs > 0) {
+  refreshTimer = setInterval(async () => {
+    try {
+      const refreshed = await server.refresh();
+      console.log(
+        `relayrad: auto-refreshed ${refreshed.length} relay endpoints`,
+      );
+    } catch (error) {
+      console.error(
+        `relayrad: relay auto-refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }, startupConfig.relayRefreshIntervalMs);
 }
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -115,6 +139,10 @@ function shutdown(): Promise<void> {
 
     try {
       requestLogger.close();
+
+      if (refreshTimer !== undefined) {
+        clearInterval(refreshTimer);
+      }
 
       if (socks5) {
         await socks5.close();

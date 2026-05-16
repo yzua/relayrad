@@ -36,6 +36,7 @@ export interface ProxyServer {
   listen(port: number, hostname?: string): Promise<void>;
   close(): Promise<void>;
   address(): AddressInfo | string | null;
+  refresh(): Promise<RelayRecord[]>;
 }
 
 export function createServer(deps: ProxyServerDeps): ProxyServer {
@@ -49,6 +50,7 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
 
   const runtime: ProxyRuntime = {
     pickRelay: () => selector.next(),
+    pickRelayFromSource: (source: string) => selector.nextFromSource(source),
     pickStickyRelay: (sessionKey) =>
       stickySessions.get(sessionKey, relayByHostname),
     rememberStickyRelay: (sessionKey, relayHostname) =>
@@ -192,6 +194,7 @@ export function createServer(deps: ProxyServerDeps): ProxyServer {
     address() {
       return server.address();
     },
+    refresh: routeDeps.refresh,
   };
 }
 

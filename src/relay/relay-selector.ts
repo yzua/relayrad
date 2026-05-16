@@ -20,26 +20,26 @@ export interface RelaySelector {
   getConfig(): ResolvedRelaySelectionConfig;
 }
 
+export interface SourceAwareRelaySelector extends RelaySelector {
+  nextFromSource(source: string, now?: number): RelayRecord | undefined;
+}
+
 export function createRelaySelector(
   initialRelays: RelayRecord[],
   initialConfig: RelaySelectionConfig = {},
-): RelaySelector {
+): SourceAwareRelaySelector {
   let relays = initialRelays.map(normalizeRelay);
   let config = normalizeConfig(initialConfig);
   let cursor = 0;
-  let randomSourceOrder: string[] = [];
   let randomSourceCursor = 0;
+  let randomSourceOrder: string[] = [];
   let randomSourceRelayCycles = new Map<string, RelayRecord[]>();
   let randomSourceRelayCursors = new Map<string, number>();
   const unhealthyUntil = new Map<string, number>();
 
-  // Generation counter — bumped on update() only. Relay membership doesn't
-  // change when a relay is marked unhealthy, so random cycles stay valid.
   let generation = 0;
   let randomGeneration = -1;
 
-  // Structural caches — invalidated only on update() since relay membership doesn't
-  // change when a relay is marked unhealthy.
   let matchedCache: RelayRecord[] | null = null;
   let sortedCache: RelayRecord[] | null = null;
   let groupedBySourceCache: Map<string, RelayRecord[]> | null = null;
@@ -68,7 +68,6 @@ export function createRelaySelector(
     return groupedBySourceCache;
   }
 
-  // Build initial cache
   invalidateStructuralCache();
 
   const list = (now = Date.now()): RelayRecord[] => {
@@ -89,10 +88,20 @@ export function createRelaySelector(
         const grouped = getGroupedBySource();
         if (grouped.size === 0) return undefined;
         if (grouped.size === 1) return nextSingleSourceRandomRelay(now);
-        return nextRandomRelay(now, grouped);
+
+        ensureSourceOrder(grouped);
+
+        if (randomSourceOrder.length === 0) return undefined;
+
+        const source =
+          randomSourceOrder[randomSourceCursor % randomSourceOrder.length];
+        if (!source) return undefined;
+        randomSourceCursor =
+          (randomSourceCursor + 1) % randomSourceOrder.length;
+
+        return nextFromSourceInternal(source, now, grouped);
       }
 
-      // Round-robin through sorted candidates, skipping unhealthy.
       const sorted = getSorted();
       if (sorted.length === 0) return undefined;
 
@@ -106,6 +115,23 @@ export function createRelaySelector(
       }
       return undefined;
     },
+
+    nextFromSource(source: string, now = Date.now()) {
+      if (config.sort === "random") {
+        const grouped = getGroupedBySource();
+        return nextFromSourceInternal(source, now, grouped);
+      }
+
+      const sorted = getSorted();
+      const sourceRelays = sorted.filter((r) => r.source === source);
+      for (const relay of sourceRelays) {
+        if (!isUnhealthy(relay.hostname, now, unhealthyUntil)) {
+          return relay;
+        }
+      }
+      return undefined;
+    },
+
     markUnhealthy(hostname: string, now = Date.now()) {
       unhealthyUntil.set(hostname, now + config.unhealthyBackoffMs);
     },
@@ -125,42 +151,26 @@ export function createRelaySelector(
     },
   };
 
-  function healthyFromMatched(now: number): RelayRecord[] {
-    const matched = getMatched();
-    if (unhealthyUntil.size === 0) return matched;
-    return matched.filter((r) => !isUnhealthy(r.hostname, now, unhealthyUntil));
-  }
-
-  function nextRandomRelay(
-    now: number,
-    candidatesBySource: Map<string, RelayRecord[]>,
-  ): RelayRecord | undefined {
+  function ensureSourceOrder(grouped: Map<string, RelayRecord[]>): void {
     if (
       randomGeneration !== generation ||
       randomSourceCursor >= randomSourceOrder.length
     ) {
-      randomSourceOrder = shuffleValues(Array.from(candidatesBySource.keys()));
+      randomSourceOrder = shuffleValues(Array.from(grouped.keys()));
       randomSourceCursor = 0;
       randomGeneration = generation;
       randomSourceRelayCycles = new Map();
       randomSourceRelayCursors = new Map();
     }
+  }
 
-    if (randomSourceOrder.length === 0) {
-      return undefined;
-    }
-
-    const source =
-      randomSourceOrder[randomSourceCursor % randomSourceOrder.length];
-    if (!source) {
-      return undefined;
-    }
-    randomSourceCursor = (randomSourceCursor + 1) % randomSourceOrder.length;
-
+  function nextFromSourceInternal(
+    source: string,
+    now: number,
+    candidatesBySource: Map<string, RelayRecord[]>,
+  ): RelayRecord | undefined {
     const sourceRelays = candidatesBySource.get(source);
-    if (!sourceRelays || sourceRelays.length === 0) {
-      return undefined;
-    }
+    if (!sourceRelays || sourceRelays.length === 0) return undefined;
 
     let cycle = randomSourceRelayCycles.get(source);
     let cycleCursor = randomSourceRelayCursors.get(source) ?? 0;
@@ -171,7 +181,6 @@ export function createRelaySelector(
       cycleCursor = 0;
     }
 
-    // Skip unhealthy relays in the pre-built cycle
     while (cycleCursor < cycle.length) {
       const relay = cycle[cycleCursor];
       cycleCursor++;
@@ -181,26 +190,26 @@ export function createRelaySelector(
       }
     }
 
-    // Cycle exhausted (all remaining were unhealthy)
-    randomSourceRelayCursors.set(source, cycleCursor);
-    return undefined;
-  }
+    // All remaining unhealthy — reshuffle and try once more
+    cycle = shuffleValues([...sourceRelays]);
+    randomSourceRelayCycles.set(source, cycle);
+    randomSourceRelayCursors.set(source, 0);
 
-  function scanCycleForHealthy(
-    cycle: RelayRecord[] | undefined,
-    source: string,
-    startAt: number,
-    now: number,
-  ): RelayRecord | undefined {
-    if (!cycle) return undefined;
-    for (let i = startAt; i < cycle.length; i++) {
-      randomSourceRelayCursors.set(source, i + 1);
+    for (let i = 0; i < cycle.length; i++) {
       const relay = cycle[i];
       if (relay && !isUnhealthy(relay.hostname, now, unhealthyUntil)) {
+        randomSourceRelayCursors.set(source, i + 1);
         return relay;
       }
     }
+
     return undefined;
+  }
+
+  function healthyFromMatched(now: number): RelayRecord[] {
+    const matched = getMatched();
+    if (unhealthyUntil.size === 0) return matched;
+    return matched.filter((r) => !isUnhealthy(r.hostname, now, unhealthyUntil));
   }
 
   function nextSingleSourceRandomRelay(now: number): RelayRecord | undefined {
@@ -211,36 +220,6 @@ export function createRelaySelector(
     if (!first) return undefined;
     const source = first.source;
 
-    const existingCycle = randomSourceRelayCycles.get(source);
-    const existingCursor = randomSourceRelayCursors.get(source) ?? 0;
-
-    if (
-      randomGeneration !== generation ||
-      !existingCycle ||
-      existingCursor >= existingCycle.length
-    ) {
-      randomGeneration = generation;
-      randomSourceRelayCycles = new Map([
-        [source, shuffleValues([...matched])],
-      ]);
-      randomSourceRelayCursors = new Map([[source, 0]]);
-    }
-
-    const cycle = randomSourceRelayCycles.get(source);
-    const cursor = randomSourceRelayCursors.get(source) ?? 0;
-
-    const found = scanCycleForHealthy(cycle, source, cursor, now);
-    if (found) return found;
-
-    // All remaining in cycle were unhealthy — rebuild and retry once
-    randomSourceRelayCycles = new Map([[source, shuffleValues([...matched])]]);
-    randomSourceRelayCursors = new Map([[source, 0]]);
-
-    return scanCycleForHealthy(
-      randomSourceRelayCycles.get(source),
-      source,
-      0,
-      now,
-    );
+    return nextFromSourceInternal(source, now, getGroupedBySource());
   }
 }

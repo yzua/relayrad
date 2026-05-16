@@ -97,6 +97,7 @@ async function handleClient(
 
   const retryDeps: RelayRetryDeps = {
     pickRelay: runtime.pickRelay,
+    pickRelayFromSource: runtime.pickRelayFromSource,
     markRelayUnhealthy: runtime.markRelayUnhealthy,
     statsTracker: runtime.statsTracker,
   };

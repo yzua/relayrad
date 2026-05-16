@@ -4,6 +4,7 @@ import type { StatsTracker } from "../stats";
 
 export interface RelayRetryDeps {
   pickRelay: () => RelayRecord | undefined;
+  pickRelayFromSource: (source: string) => RelayRecord | undefined;
   markRelayUnhealthy: (hostname: string) => void;
   statsTracker: StatsTracker;
   onRelaySuccess?: (relay: RelayRecord) => void;
@@ -12,6 +13,7 @@ export interface RelayRetryDeps {
 
 export interface ProxyRuntimeBase {
   pickRelay: () => RelayRecord | undefined;
+  pickRelayFromSource: (source: string) => RelayRecord | undefined;
   markRelayUnhealthy: (hostname: string) => void;
   requestLogger: ProxyRequestLogger;
   statsTracker: StatsTracker;
@@ -52,6 +54,9 @@ export function createRetryDeps(
 
       return runtime.pickRelay();
     },
+    pickRelayFromSource: (source: string) => {
+      return runtime.pickRelayFromSource(source);
+    },
     markRelayUnhealthy: runtime.markRelayUnhealthy,
     statsTracker: runtime.statsTracker,
   };
@@ -74,16 +79,35 @@ export async function tryRelays(
   deps: RelayRetryDeps,
   action: (relay: RelayRecord) => Promise<void>,
 ): Promise<Error | undefined> {
+  return tryRelaysSequential(deps, action);
+}
+
+async function tryRelaysSequential(
+  deps: RelayRetryDeps,
+  action: (relay: RelayRecord) => Promise<void>,
+): Promise<Error | undefined> {
   const attempted = new Set<string>();
   let lastError: Error | undefined;
+  let source: string | undefined;
 
   while (true) {
-    const relay = deps.pickRelay();
+    let relay: RelayRecord | undefined;
+
+    if (source) {
+      relay = deps.pickRelayFromSource(source);
+    } else {
+      relay = deps.pickRelay();
+    }
+
     if (!relay || attempted.has(relay.hostname)) {
       if (lastError) {
         deps.statsTracker.recordRequestFailed();
       }
       return lastError;
+    }
+
+    if (!source) {
+      source = relay.source;
     }
 
     attempted.add(relay.hostname);
@@ -94,13 +118,25 @@ export async function tryRelays(
       deps.onRelaySuccess?.(relay);
       return undefined;
     } catch (error) {
-      deps.markRelayUnhealthy(relay.hostname);
-      deps.statsTracker.recordRelayFailure(relay.hostname);
-      deps.onRelayFailure?.(relay);
+      handleRelayFailure(deps, relay, error);
       lastError =
         error instanceof Error
           ? error
           : new Error("Failed to use upstream relay");
     }
   }
+}
+
+function handleRelayFailure(
+  deps: RelayRetryDeps,
+  relay: RelayRecord,
+  error: unknown,
+): void {
+  deps.markRelayUnhealthy(relay.hostname);
+  deps.statsTracker.recordRelayFailure(relay.hostname);
+  deps.onRelayFailure?.(relay);
+  const msg = error instanceof Error ? error.message : "Unknown error";
+  console.warn(
+    `relayrad: relay ${relay.hostname} (${relay.ipv4}:${relay.socks5Port}) failed: ${msg}`,
+  );
 }

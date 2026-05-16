@@ -1,6 +1,6 @@
 import type { Socket } from "node:net";
-import { connect as connectTls } from "node:tls";
 import type { RelayRecord } from "../relay/relay-types";
+import { openRelaySocket } from "./relay-socket";
 import { readUntilHeaderEnd } from "./socket-utils";
 
 const HTTP_PROXY_CONNECT_TIMEOUT_MS = 10_000;
@@ -10,7 +10,7 @@ export async function connectViaHttpProxy(
   targetHost: string,
   targetPort: number,
 ): Promise<Socket> {
-  const socket = await openTlsSocket(relay.socks5Hostname, relay.socks5Port);
+  const socket = await openRelaySocket(relay);
 
   try {
     const connectLine =
@@ -46,7 +46,7 @@ export async function connectViaHttpProxy(
 }
 
 export async function openHttpProxySocket(relay: RelayRecord): Promise<Socket> {
-  return openTlsSocket(relay.socks5Hostname, relay.socks5Port);
+  return openRelaySocket(relay);
 }
 
 export function buildHttpProxyRequest(
@@ -89,22 +89,4 @@ export function buildProxyAuthHeader(relay: RelayRecord): string | undefined {
   const header = `Proxy-Authorization: Basic ${credentials}`;
   proxyAuthCache.set(relay, header);
   return header;
-}
-
-function openTlsSocket(host: string, port: number): Promise<Socket> {
-  return new Promise((resolve, reject) => {
-    const socket = connectTls({ host, port, rejectUnauthorized: false }, () => {
-      resolve(socket);
-    });
-
-    socket.once("error", (error) => {
-      socket.destroy();
-      reject(error);
-    });
-
-    socket.setTimeout(HTTP_PROXY_CONNECT_TIMEOUT_MS, () => {
-      socket.destroy();
-      reject(new Error(`TLS connection to ${host}:${port} timed out`));
-    });
-  });
 }

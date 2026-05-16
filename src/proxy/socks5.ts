@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
-import { connect as connectTcp, type Socket } from "node:net";
+import type { Socket } from "node:net";
 import type { RelayRecord } from "../relay/relay-types";
-import { prewarmRelaySocket, takePrewarmedSocket } from "./socket-prewarm";
+import { openRelaySocket } from "./relay-socket";
 
 const SOCKS5_CONNECT_TIMEOUT_MS = 30_000;
-const TCP_CONNECT_TIMEOUT_MS = 10_000;
 
 export async function connectViaSocks5(
   relay: RelayRecord,
@@ -12,12 +11,7 @@ export async function connectViaSocks5(
   targetPort: number,
   uniqueAuthKey?: string,
 ): Promise<Socket> {
-  const tcpTimeout = relay.connectTimeoutMs ?? TCP_CONNECT_TIMEOUT_MS;
-  const socket = await openSocket(
-    relay.socks5Hostname,
-    relay.socks5Port,
-    tcpTimeout,
-  );
+  const socket = await openRelaySocket(relay);
 
   try {
     const auth = resolveSocks5Auth(relay, uniqueAuthKey);
@@ -181,37 +175,6 @@ function buildSocks5ConnectRequest(
 
 function classifyHost(host: string): "ipv4" | "domain" {
   return /^\d+\.\d+\.\d+\.\d+$/.test(host) ? "ipv4" : "domain";
-}
-
-function openSocket(
-  host: string,
-  port: number,
-  timeoutMs = TCP_CONNECT_TIMEOUT_MS,
-): Promise<Socket> {
-  const prewarmed = takePrewarmedSocket(host, port);
-  if (prewarmed) {
-    prewarmRelaySocket(host, port);
-    return Promise.resolve(prewarmed);
-  }
-
-  return new Promise((resolve, reject) => {
-    const socket = connectTcp({ host, port });
-    const timer = setTimeout(() => {
-      socket.destroy();
-      reject(new Error(`TCP connect to ${host}:${port} timed out`));
-    }, timeoutMs);
-    timer.unref?.();
-
-    socket.once("connect", () => {
-      clearTimeout(timer);
-      prewarmRelaySocket(host, port);
-      resolve(socket);
-    });
-    socket.once("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-  });
 }
 
 function writeAndExpect(

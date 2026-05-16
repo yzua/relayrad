@@ -1,8 +1,8 @@
-import { connect as connectTcp, type Socket } from "node:net";
+import type { Socket } from "node:net";
 import type { RelayRecord } from "../relay/relay-types";
+import { openRelaySocket } from "./relay-socket";
 import { readUntilHeaderEnd } from "./socket-utils";
 
-const HTTP_PLAIN_TCP_TIMEOUT_MS = 3_000;
 const HTTP_PLAIN_RESPONSE_TIMEOUT_MS = 5_000;
 
 export async function connectViaHttpPlain(
@@ -10,12 +10,7 @@ export async function connectViaHttpPlain(
   targetHost: string,
   targetPort: number,
 ): Promise<Socket> {
-  const tcpTimeout = relay.connectTimeoutMs ?? HTTP_PLAIN_TCP_TIMEOUT_MS;
-  const socket = await openPlainSocket(
-    relay.socks5Hostname,
-    relay.socks5Port,
-    tcpTimeout,
-  );
+  const socket = await openRelaySocket(relay);
 
   try {
     const connectLine =
@@ -46,26 +41,5 @@ export async function connectViaHttpPlain(
 }
 
 export function openPlainHttpProxySocket(relay: RelayRecord): Promise<Socket> {
-  const tcpTimeout = relay.connectTimeoutMs ?? HTTP_PLAIN_TCP_TIMEOUT_MS;
-  return openPlainSocket(relay.socks5Hostname, relay.socks5Port, tcpTimeout);
-}
-
-function openPlainSocket(
-  host: string,
-  port: number,
-  timeoutMs: number,
-): Promise<Socket> {
-  return new Promise((resolve, reject) => {
-    const socket = connectTcp({ host, port }, () => resolve(socket));
-
-    socket.once("error", (error) => {
-      socket.destroy();
-      reject(error);
-    });
-
-    socket.setTimeout(timeoutMs, () => {
-      socket.destroy();
-      reject(new Error(`TCP connection to ${host}:${port} timed out`));
-    });
-  });
+  return openRelaySocket(relay);
 }

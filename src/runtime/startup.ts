@@ -63,6 +63,103 @@ export function resolveStartupConfig(
   };
 }
 
+interface RelaySourceDescriptor {
+  label: string;
+  load(): Promise<RelayRecord[]>;
+  fixHints: string[];
+  formatSummary(count: number): string;
+}
+
+const SOURCE_FORMATTERS: Record<string, (count: number) => string> = {
+  mullvad: (n) => `mullvad(${n} relays)`,
+  tor: (n) => `tor(${n} local endpoint${n === 1 ? "" : "s"}, dynamic circuits)`,
+  nordvpn: (n) => `nordvpn(${n} servers)`,
+  "github-lists": (n) => `github-lists(${n} proxies)`,
+};
+
+function createMullvadDescriptor(
+  env: Record<string, string | undefined>,
+): RelaySourceDescriptor {
+  return {
+    label: "Mullvad",
+    async load() {
+      return loadMullvadRelays(env);
+    },
+    fixHints: ["Check network connectivity to api.mullvad.net"],
+    formatSummary: SOURCE_FORMATTERS["mullvad"]!,
+  };
+}
+
+function createTorDescriptor(port: number): RelaySourceDescriptor {
+  return {
+    label: "TOR",
+    async load() {
+      const available = await checkTorAvailable(port);
+      if (!available) {
+        throw new Error(
+          `not available on 127.0.0.1:${port} — start Tor and try again`,
+        );
+      }
+      return [createTorRelay(port)];
+    },
+    fixHints: [
+      "Install Tor: sudo apt install tor",
+      "Start Tor service: sudo systemctl start tor",
+    ],
+    formatSummary: SOURCE_FORMATTERS["tor"]!,
+  };
+}
+
+function createNordvpnDescriptor(
+  env: Record<string, string | undefined>,
+): RelaySourceDescriptor {
+  return {
+    label: "NordVPN",
+    async load() {
+      const result = await loadNordvpnRelays(env);
+      for (const warning of result.warnings) {
+        console.warn(`relayrad: warning: ${warning}`);
+      }
+      return result.relays;
+    },
+    fixHints: [
+      "Check network connectivity to api.nordvpn.com",
+      "Or override the API URL: NORDVPN_API_URL=https://custom-endpoint bun run start",
+    ],
+    formatSummary: SOURCE_FORMATTERS["nordvpn"]!,
+  };
+}
+
+function createGithubListsDescriptor(): RelaySourceDescriptor {
+  return {
+    label: "GitHub Lists",
+    async load() {
+      const result = await loadGithubListRelays();
+      for (const warning of result.warnings) {
+        console.warn(`relayrad: warning: ${warning}`);
+      }
+      return result.relays;
+    },
+    fixHints: ["Check network connectivity to raw.githubusercontent.com"],
+    formatSummary: SOURCE_FORMATTERS["github-lists"]!,
+  };
+}
+
+function resolveActiveDescriptors(
+  config: Pick<
+    StartupConfig,
+    "useMullvad" | "useTor" | "useNordvpn" | "useGithubLists" | "torPort"
+  >,
+  env: Record<string, string | undefined>,
+): RelaySourceDescriptor[] {
+  const descriptors: RelaySourceDescriptor[] = [];
+  if (config.useMullvad) descriptors.push(createMullvadDescriptor(env));
+  if (config.useTor) descriptors.push(createTorDescriptor(config.torPort));
+  if (config.useNordvpn) descriptors.push(createNordvpnDescriptor(env));
+  if (config.useGithubLists) descriptors.push(createGithubListsDescriptor());
+  return descriptors;
+}
+
 export async function loadMullvadRelays(
   env: Record<string, string | undefined>,
 ): Promise<RelayRecord[]> {
@@ -81,16 +178,15 @@ export async function loadMullvadRelays(
 }
 
 async function tryLoadSource(
-  label: string,
-  loader: () => Promise<RelayRecord[]>,
+  descriptor: RelaySourceDescriptor,
   relays: RelayRecord[],
   errors: string[],
 ): Promise<void> {
   try {
-    relays.push(...(await loader()));
+    relays.push(...(await descriptor.load()));
   } catch (error) {
     errors.push(
-      `${label}: ${error instanceof Error ? error.message : String(error)}`,
+      `${descriptor.label}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
@@ -102,68 +198,16 @@ export async function loadRelaySources(
   >,
   env: Record<string, string | undefined>,
 ): Promise<RelayRecord[]> {
+  const descriptors = resolveActiveDescriptors(config, env);
   const relays: RelayRecord[] = [];
   const errors: string[] = [];
 
-  if (config.useMullvad) {
-    await tryLoadSource(
-      "Mullvad",
-      () => loadMullvadRelays(env),
-      relays,
-      errors,
-    );
-  }
-
-  if (config.useTor) {
-    const available = await checkTorAvailable(config.torPort);
-    if (!available) {
-      errors.push(
-        `TOR: not available on 127.0.0.1:${config.torPort} — start Tor and try again`,
-      );
-    } else {
-      relays.push(createTorRelay(config.torPort));
-    }
-  }
-
-  if (config.useNordvpn) {
-    await tryLoadSource(
-      "NordVPN",
-      async () => {
-        const result = await loadNordvpnRelays(env);
-        for (const warning of result.warnings) {
-          console.warn(`relayrad: warning: ${warning}`);
-        }
-        return result.relays;
-      },
-      relays,
-      errors,
-    );
-  }
-
-  if (config.useGithubLists) {
-    await tryLoadSource(
-      "GitHub Lists",
-      async () => {
-        const result = await loadGithubListRelays();
-        for (const warning of result.warnings) {
-          console.warn(`relayrad: warning: ${warning}`);
-        }
-        return result.relays;
-      },
-      relays,
-      errors,
-    );
+  for (const descriptor of descriptors) {
+    await tryLoadSource(descriptor, relays, errors);
   }
 
   if (errors.length > 0) {
-    reportSourceErrors(
-      errors,
-      relays.length === 0,
-      config.useMullvad,
-      config.useTor,
-      config.useNordvpn,
-      config.useGithubLists,
-    );
+    reportSourceErrors(errors, relays.length === 0, descriptors);
     if (relays.length === 0) {
       throw new Error("All relay sources failed");
     }
@@ -173,46 +217,23 @@ export async function loadRelaySources(
 }
 
 export function formatLoadedSources(relays: RelayRecord[]): string {
-  const sourceLabels: string[] = [];
-  const mullvadCount = relays.filter(
-    (relay) => relay.source === "mullvad",
-  ).length;
-  const torCount = relays.filter((relay) => relay.source === "tor").length;
-  const nordvpnCount = relays.filter(
-    (relay) => relay.source === "nordvpn",
-  ).length;
-  const githubListsCount = relays.filter(
-    (relay) => relay.source === "github-lists",
-  ).length;
-
-  if (mullvadCount > 0) {
-    sourceLabels.push(`mullvad(${mullvadCount} relays)`);
+  const counts = new Map<string, number>();
+  for (const relay of relays) {
+    counts.set(relay.source, (counts.get(relay.source) ?? 0) + 1);
   }
 
-  if (torCount > 0) {
-    sourceLabels.push(
-      `tor(${torCount} local endpoint${torCount === 1 ? "" : "s"}, dynamic circuits)`,
-    );
-  }
-
-  if (nordvpnCount > 0) {
-    sourceLabels.push(`nordvpn(${nordvpnCount} servers)`);
-  }
-
-  if (githubListsCount > 0) {
-    sourceLabels.push(`github-lists(${githubListsCount} proxies)`);
-  }
-
-  return sourceLabels.join(", ");
+  return Array.from(counts.entries())
+    .map(([source, count]) => {
+      const formatter = SOURCE_FORMATTERS[source];
+      return formatter ? formatter(count) : `${source}(${count})`;
+    })
+    .join(", ");
 }
 
 function reportSourceErrors(
   errors: string[],
   fatal: boolean,
-  useMullvad: boolean,
-  useTor: boolean,
-  useNordvpn: boolean,
-  useGithubLists: boolean,
+  descriptors: RelaySourceDescriptor[],
 ): void {
   for (const err of errors) {
     console.error(`relayrad: failed to load ${err}`);
@@ -223,34 +244,11 @@ function reportSourceErrors(
     return;
   }
 
-  if (useMullvad) {
+  for (const descriptor of descriptors) {
     console.error("");
-    console.error("To fix Mullvad:");
-    console.error("  - Check network connectivity to api.mullvad.net");
-  }
-
-  if (useTor) {
-    console.error("");
-    console.error("To fix TOR:");
-    console.error("  - Install Tor: sudo apt install tor");
-    console.error("  - Start Tor service: sudo systemctl start tor");
-  }
-
-  if (useNordvpn) {
-    console.error("");
-    console.error("To fix NordVPN:");
-    console.error("  - Check network connectivity to api.nordvpn.com");
-    console.error("  - Or override the API URL:");
-    console.error(
-      "      NORDVPN_API_URL=https://custom-endpoint bun run start",
-    );
-  }
-
-  if (useGithubLists) {
-    console.error("");
-    console.error("To fix GitHub Lists:");
-    console.error(
-      "  - Check network connectivity to raw.githubusercontent.com",
-    );
+    console.error(`To fix ${descriptor.label}:`);
+    for (const hint of descriptor.fixHints) {
+      console.error(`  - ${hint}`);
+    }
   }
 }
